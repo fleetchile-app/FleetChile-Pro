@@ -45,13 +45,13 @@ const driver=x=>[x.name,x.rut,x.license,x.expiry,badge(x.status)];
 const route=x=>[x.truck,x.origin,x.destination,x.distance_km+" km",x.progress+"%",badge(x.status)];
 const load=x=>[x.client,x.guide,x.cargo,Number(x.weight_kg).toLocaleString("es-CL")+" kg",x.truck,`${x.origin} → ${x.destination}`,badge(x.status)];
 const maint=x=>[x.truck,x.item,x.due,money(x.cost_clp),badge(x.status)];
-const fuel=x=>[x.date,x.truck,x.liters+" L",money(x.price_clp),money(x.total_clp),x.station];
+const fuelRow=x=>[x.date,x.truck,x.liters+" L",money(x.price_clp),money(x.total_clp),x.station];
 function trucks(){listing("trucks","camiones",["Patente","Tipo","Capacidad","Conductor","Estado","Ubicación"],truck)}
 function drivers(){listing("drivers","conductores",["Nombre","RUT","Licencia","Vencimiento","Estado"],driver)}
 function routes(){listing("routes","rutas",["Camión","Origen","Destino","Distancia","Avance","Estado"],route)}
 function loads(){listing("loads","cargas",["Cliente","Guía","Carga","Peso","Camión","Ruta","Estado"],load)}
 function maintenance(){listing("maintenance","mantenciones",["Camión","Servicio","Vencimiento","Costo","Estado"],maint)}
-function fuel(){listing("fuel","combustible",["Fecha","Camión","Litros","Precio/L","Total","Estación"],fuel)}
+function fuel(){listing("fuel","combustible",["Fecha","Camión","Litros","Precio/L","Total","Estación"],fuelRow)}
 async function alerts(){let r=await get("alerts");A.innerHTML=`<div class="card"><h3>Alertas</h3>${r.map(x=>`<div class="alert"><b>${x.title}</b><br>${x.text}</div>`).join("")}</div>`}
 async function reports(){let [d,t,l,f]=await Promise.all([get("dashboard"),get("trucks"),get("loads"),get("fuel")]);A.innerHTML=`<div class="grid two"><div class="card"><h3>Indicadores</h3><p>Camiones: <b>${d.trucks}</b></p><p>En ruta: <b>${d.enroute}</b></p><p>Cargas: <b>${d.loads}</b></p><p>Alertas: <b>${d.alerts}</b></p><p>Combustible: <b>${money(d.fuel)}</b></p></div><div class="card"><h3>Utilización</h3>${t.map(x=>`<p>${x.patente} — ${badge(x.status)}</p>`).join("")}</div></div>`}
 const forms={trucks:[["patente","Patente"],["tipo","Tipo"],["capacidad_t","Capacidad (t)"],["driver","Conductor"],["location","Ubicación"]],routes:[["truck","Camión"],["origin","Origen"],["destination","Destino"],["distance_km","Distancia km"],["progress","Avance %"]],loads:[["client","Cliente"],["guide","Guía interna"],["cargo","Carga"],["weight_kg","Peso kg"],["volume_m3","Volumen m³"],["value_clp","Valor CLP"],["truck","Camión"],["origin","Origen"],["destination","Destino"]],fuel:[["date","Fecha"],["truck","Camión"],["liters","Litros"],["price_clp","Precio/L"],["station","Estación"]]};
