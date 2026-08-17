@@ -3,6 +3,7 @@ const {Pool}=require("pg");
 const fs=require("fs");
 const path=require("path");
 const {registerCoreRoutes,initializeCorePlatform}=require("./core-api");
+const {registerOperationsRoutes}=require("./operations-api");
 const {registerAuthRoutes,authMiddleware}=require("./auth");
 const app=express();const PORT=Number(process.env.PORT||3000);const DATABASE_URL=process.env.DATABASE_URL;
 if(!DATABASE_URL){console.error("Falta DATABASE_URL. Define la variable de entorno antes de iniciar FleetChile.");process.exit(1)}
@@ -12,9 +13,8 @@ const tables=["trucks","drivers","routes","loads","maintenance","fuel","alerts",
 registerAuthRoutes(app,pool);
 app.get("/api/health",async(req,res)=>{try{await pool.query("select 1");res.json({ok:true,service:"fleetchile",time:new Date().toISOString()})}catch(e){res.status(503).json({ok:false,service:"fleetchile",error:"database_unavailable"})}});
 app.use("/api",authMiddleware.bind(null,pool));
-// Las rutas específicas del núcleo deben registrarse antes del comodín /api/:table.
-// De lo contrario, /api/clients y /api/trips serían interceptadas por el comodín y devolverían 404.
 registerCoreRoutes(app,pool);
+registerOperationsRoutes(app,pool);
 app.get("/api/dashboard",async(req,res)=>{try{const q=async sql=>Number((await pool.query(sql)).rows[0].n||0);res.json({trucks:await q("select count(*) n from trucks"),enroute:await q("select count(*) n from trucks where status='En ruta'"),loads:await q("select count(*) n from loads"),alerts:await q("select count(*) n from alerts where resolved=false"),fuel:await q("select coalesce(sum(total_clp),0) n from fuel"),km:await q("select coalesce(sum(km),0) n from trucks")})}catch(e){res.status(500).json({error:"No se pudo cargar el dashboard"})}});
 app.get("/api/:table",async(req,res)=>{if(!safeTable(req.params.table))return res.sendStatus(404);try{res.json((await pool.query(`select * from ${req.params.table} order by id desc`)).rows)}catch(e){res.status(500).json({error:"No se pudo consultar la información"})}});
 app.get("/api/trucks/:id/history",async(req,res)=>{try{res.json((await pool.query("select * from telemetry where truck_id=$1 order by recorded_at desc limit 100",[req.params.id])).rows)}catch(e){res.status(500).json({error:"No se pudo consultar el historial GPS"})}});
@@ -26,6 +26,6 @@ app.post("/api/fuel",async(req,res)=>{const{date,truck,liters,price_clp,station}
 app.post("/api/maintenance",async(req,res)=>{const{truck,item,due,cost_clp=0,status="Pendiente"}=req.body;try{const r=await pool.query("insert into maintenance(truck,item,due,cost_clp,status) values($1,$2,$3,$4,$5) returning *",[truck||null,item||null,due||null,cost_clp,status]);res.status(201).json(r.rows[0])}catch(e){res.status(400).json({error:"No se pudo registrar la mantención"})}});
 app.delete("/api/:table/:id",async(req,res)=>{if(!safeTable(req.params.table))return res.sendStatus(404);try{const r=await pool.query(`delete from ${req.params.table} where id=$1`,[req.params.id]);if(!r.rowCount)return res.sendStatus(404);res.sendStatus(204)}catch(e){res.status(400).json({error:"No se pudo eliminar el registro"})}});
 app.use((req,res,next)=>{if(req.method==="GET"&&!req.path.startsWith("/api/"))return res.sendFile(path.join(__dirname,"public","index.html"));next()});
-async function initializeDatabase(){const schema=fs.readFileSync(path.join(__dirname,"schema.sql"),"utf8");await pool.query(schema);const{rows}=await pool.query("select count(*)::int as count from trucks");if(rows[0].count===0){const seed=fs.readFileSync(path.join(__dirname,"seed.sql"),"utf8");await pool.query(seed);console.log("Base de datos inicializada con datos demo.")}await initializeCorePlatform(pool);const authMigration=fs.readFileSync(path.join(__dirname,"migrations","003_auth_rbac.sql"),"utf8");await pool.query(authMigration)}
+async function initializeDatabase(){const schema=fs.readFileSync(path.join(__dirname,"schema.sql"),"utf8");await pool.query(schema);const{rows}=await pool.query("select count(*)::int as count from trucks");if(rows[0].count===0){const seed=fs.readFileSync(path.join(__dirname,"seed.sql"),"utf8");await pool.query(seed);console.log("Base de datos inicializada con datos demo.")}await initializeCorePlatform(pool);const authMigration=fs.readFileSync(path.join(__dirname,"migrations","003_auth_rbac.sql"),"utf8");await pool.query(authMigration);const operationsMigration=fs.readFileSync(path.join(__dirname,"migrations","004_operations.sql"),"utf8");await pool.query(operationsMigration)}
 async function start(){await initializeDatabase();const server=app.listen(PORT,()=>console.log(`FleetChile Pro escuchando en puerto ${PORT}`));const shutdown=async()=>{server.close(async()=>{await pool.end();process.exit(0)})};process.on("SIGTERM",shutdown);process.on("SIGINT",shutdown)}
 start().catch(err=>{console.error("No se pudo iniciar FleetChile:",err.message);process.exit(1)});
