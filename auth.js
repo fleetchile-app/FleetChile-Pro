@@ -14,8 +14,7 @@ const verifyPassword = (password, stored) => new Promise(resolve => {
     if (scheme !== 'scrypt' || !salt || !hex) return resolve(false);
     crypto.scrypt(password, salt, 64, { N: 16384, r: 8, p: 1 }, (err,key) => {
       if (err) return resolve(false);
-      const a = Buffer.from(hex,'hex');
-      const b = Buffer.from(key);
+      const a = Buffer.from(hex,'hex'); const b = Buffer.from(key);
       resolve(a.length === b.length && crypto.timingSafeEqual(a,b));
     });
   } catch { resolve(false); }
@@ -28,6 +27,17 @@ async function userView(pool,userId){
     coalesce((select json_agg(p.code order by p.code) from role_permissions rp join permissions p on p.id=rp.permission_id where rp.role_id=u.role_id),'[]'::json) permissions
     from users u left join roles r on r.id=u.role_id left join companies c on c.id=u.company_id where u.id=$1 and u.active=true`,[userId]);
   return r.rows[0] || null;
+}
+
+async function authenticateToken(pool,req){
+  const h=req.get('authorization')||'';
+  const raw=h.startsWith('Bearer ')?h.slice(7):'';
+  if(!raw)return null;
+  const r=await pool.query(`select s.user_id from user_sessions s where s.token_hash=$1 and s.expires_at>now()`,[tokenHash(raw)]);
+  if(!r.rowCount)return null;
+  const user=await userView(pool,r.rows[0].user_id);
+  if(user) await pool.query('update user_sessions set last_seen_at=now() where token_hash=$1',[tokenHash(raw)]);
+  return user;
 }
 
 function registerAuthRoutes(app,pool){
@@ -69,7 +79,10 @@ function registerAuthRoutes(app,pool){
 
   app.post('/api/auth/logout',async(req,res)=>{const h=req.get('authorization')||'';const raw=h.startsWith('Bearer ')?h.slice(7):'';if(raw) await pool.query('delete from user_sessions where token_hash=$1',[tokenHash(raw)]);res.json({ok:true});});
 
-  app.get('/api/auth/me',async(req,res)=>{if(!req.user)return res.status(401).json({error:'No autenticado'});res.json({user:req.user});});
+  app.get('/api/auth/me',async(req,res)=>{
+    try { const user=await authenticateToken(pool,req); if(!user)return res.status(401).json({error:'No autenticado'}); res.json({user}); }
+    catch { res.status(401).json({error:'No se pudo validar la sesión'}); }
+  });
 
   app.get('/api/roles',async(req,res)=>{try{res.json((await pool.query('select id,code,name,description from roles order by id')).rows)}catch{res.status(500).json({error:'No se pudieron consultar los roles'})}});
   app.get('/api/users',async(req,res)=>{try{res.json((await pool.query(`select u.id,u.name,u.email,u.phone,u.active,u.last_login_at,u.company_id,u.role_id,r.code role_code,r.name role_name,c.legal_name company_name from users u left join roles r on r.id=u.role_id left join companies c on c.id=u.company_id order by u.id desc`)).rows)}catch{res.status(500).json({error:'No se pudieron consultar los usuarios'})}});
@@ -82,15 +95,9 @@ function registerAuthRoutes(app,pool){
 }
 
 async function authMiddleware(pool,req,res,next){
-  const raw=(req.get('authorization')||'').startsWith('Bearer ')?req.get('authorization').slice(7):'';
-  if(!raw)return res.status(401).json({error:'Autenticación requerida'});
-  try{
-    const r=await pool.query(`select s.user_id from user_sessions s where s.token_hash=$1 and s.expires_at>now()`,[tokenHash(raw)]);
-    if(!r.rowCount)return res.status(401).json({error:'Sesión inválida o expirada'});
-    const user=await userView(pool,r.rows[0].user_id);if(!user)return res.status(401).json({error:'Usuario inactivo'});
-    await pool.query('update user_sessions set last_seen_at=now() where token_hash=$1',[tokenHash(raw)]);
-    req.user=user;req.sessionToken=raw;next();
-  }catch{res.status(401).json({error:'No se pudo validar la sesión'});}
+  const user=await authenticateToken(pool,req).catch(()=>null);
+  if(!user)return res.status(401).json({error:'Autenticación requerida'});
+  req.user=user;next();
 }
 
 function requirePermission(code){return (req,res,next)=>{if(!req.user)return res.status(401).json({error:'Autenticación requerida'});if(req.user.role_code==='admin'||(req.user.permissions||[]).includes(code))return next();res.status(403).json({error:`Permiso requerido: ${code}`});};}
