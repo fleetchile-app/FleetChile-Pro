@@ -45,6 +45,10 @@ La tabla `loads` original se mantiene por compatibilidad con la interfaz histór
 
 Los campos de texto históricos de `routes`/`loads` no se eliminan todavía porque existe código de compatibilidad. Una futura migración deberá verificar todas las dependencias antes de retirar el modelo legacy.
 
+### API CRUD genérica legacy
+
+`/api/:table` y las operaciones CRUD genéricas equivalentes se mantienen únicamente por compatibilidad con módulos existentes. **Ningún módulo nuevo de Fase 3, Fase 4, Fase 5 o Fase 6 debe construirse sobre esta API.** Los módulos nuevos deben utilizar endpoints específicos con autenticación, autorización, contexto `company_id`, validación de datos y reglas de negocio.
+
 ## Aislamiento por empresa
 
 Las entidades operacionales pertenecen a una empresa mediante `company_id` cuando corresponde. Las APIs autenticadas aplican el contexto de empresa para usuarios no administradores. Los administradores pueden operar transversalmente sobre empresas desde las funciones administrativas autorizadas.
