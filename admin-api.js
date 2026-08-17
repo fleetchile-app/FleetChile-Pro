@@ -1,6 +1,7 @@
 const {requirePermission}=require('./auth');
 
 function registerAdminRoutes(app,pool){
+  app.get('/api/public/settings',async(req,res)=>{try{const r=await pool.query("select setting_key,value from system_settings where setting_key in ('appearance.company_name','appearance.language')");const out={};for(const x of r.rows)out[x.setting_key]=x.value;res.json(out)}catch(e){res.status(500).json({error:'No se pudo cargar la configuración pública'})}});
   const adminOnly=(req,res,next)=>{if(req.user?.role_code==='admin')return next();res.status(403).json({error:'Acceso restringido a administradores'});};
 
   app.get('/api/admin/settings',adminOnly,async(req,res)=>{try{const r=await pool.query('select setting_key,category,label,value,description,updated_at from system_settings order by category,setting_key');res.json(r.rows)}catch(e){res.status(500).json({error:'No se pudieron consultar las configuraciones'})}});
