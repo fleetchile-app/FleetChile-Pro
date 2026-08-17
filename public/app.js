@@ -15,7 +15,7 @@ const icons={
 };
 const menus=[
  ["dashboard",icons.dashboard,"Dashboard","OPERACIÓN"],
- ["trucks",icons.trucks,"Camiones","FLOTA"],["drivers",icons.drivers,"Conductores","FLOTA"],["routes",icons.routes,"Rutas","OPERACIONES"],["trips",icons.trips,"Viajes","OPERACIONES"],["loads",icons.loads,"Cargas","OPERACIONES"],
+ ["trucks",icons.trucks,"Camiones","FLOTA"],["drivers",icons.drivers,"Conductores","FLOTA"],["routes",icons.routes,"Rutas","OPERACIONES"],["trips",icons.trips,"Viajes","OPERACIONES"],["loads",icons.loads,"Cargas","OPERACIONES"],["clients",icons.clients,"Clientes","OPERACIONES"],
  ["documents",icons.documents,"Documentos SII","CONTROL"],["maintenance",icons.maintenance,"Mantenciones","FLOTA"],["fuel",icons.fuel,"Combustible","FLOTA"],["alerts",icons.alerts,"Incidentes","CONTROL"],["reports",icons.reports,"Reportes","CONTROL"]
 ];
 function buildNav(){let groups=[];for(const m of menus){let g=groups.find(x=>x.name===m[3]);if(!g){g={name:m[3],items:[]};groups.push(g)}g.items.push(m)}nav.innerHTML=groups.map(g=>`<div class="nav-group"><div class="nav-section">${g.name}</div>${g.items.map(x=>`<button data-v="${x[0]}" title="${x[2]}"><i>${x[1]}</i><span>${x[2]}</span></button>`).join("")}</div>`).join("");nav.querySelectorAll("button").forEach(b=>b.onclick=()=>render(b.dataset.v))}
