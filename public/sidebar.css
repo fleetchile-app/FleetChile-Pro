@@ -24,6 +24,7 @@ aside .brand small{color:var(--fc-sidebar-muted)!important;font-size:7px!importa
 aside footer{margin-top:auto!important;padding:11px 7px 3px!important;border-top:1px solid var(--fc-sidebar-line)!important;color:#6f849e!important;font-size:8px!important;line-height:1.5!important}
 aside footer #health{color:#73b991!important}
 main{margin-left:164px!important}
-/* Keep the existing trip drawer and all operational components unchanged. */
+/* Operational trip drawer must sit above Leaflet's map panes. */
+.drawer{z-index:1000!important}
 @media(max-width:900px){aside{width:68px!important;min-width:68px!important;padding:14px 7px!important}main{margin-left:68px!important}aside .brand{grid-template-columns:1fr!important;place-items:center!important;padding:3px 2px 15px!important}.brand strong,.brand small{display:none!important}aside .brand b{width:38px!important;height:38px!important}#nav .nav-section{display:none!important}#nav .nav-group{margin-bottom:5px!important}#nav .nav-group+.nav-group{padding-top:5px!important;border-top:1px solid var(--fc-sidebar-line)!important}#nav button{height:40px!important;min-height:40px!important;justify-content:center!important;padding:0!important}#nav button span{display:none!important}#nav button i{width:22px!important;height:22px!important;min-width:22px!important}}
 @media(max-width:700px){aside{width:60px!important;min-width:60px!important}main{margin-left:60px!important}aside .brand b{width:36px!important;height:36px!important}#nav button{height:39px!important;min-height:39px!important}}
