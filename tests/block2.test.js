@@ -49,6 +49,15 @@ async function statusRoute(endpoint,pool){
   const app=fakeApp();await endpoint.register(app,pool);return app.route('patch',endpoint.path);
 }
 
+function legacyLoadHandler(){
+  const source=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
+  const start=source.indexOf('async function legacyTruckBelongs');
+  const handlerStart=source.indexOf('async function createLegacyLoad',start);
+  const end=source.indexOf('\n}\n',handlerStart)+2;
+  assert.ok(start>=0&&handlerStart>start&&end>handlerStart,'No se pudo aislar createLegacyLoad');
+  return Function('writeAudit',`${source.slice(start,end)};return createLegacyLoad;`)(writeAudit);
+}
+
 test('creación de viaje persiste route_id, registra Planificado inicial y audita en la transacción',async()=>{
   const pool=transactionalPool(async(sql,values)=>{
     if(sql==='BEGIN'||sql==='COMMIT')return {rowCount:0,rows:[]};
@@ -563,6 +572,98 @@ test('trip_loads: detalle autoriza el viaje antes de devolver loads filtradas po
   assert.match(loadsQuery.sql,/where trip_id=\$1 order by id desc$/);
   assert.deepEqual(loadsQuery.values,['7']);
   assert.equal(res.payload.loads.some(item=>item.trip_id!==7),false);
+});
+
+test('loads legacy: creación conserva payload, audita y confirma en orden transaccional',async()=>{
+  const created={id:31,company_id:10,client:'Cliente',guide:'G-1',cargo:'Carga',weight_kg:100,volume_m3:4,value_clp:90000,truck:null,origin:'A',destination:'B',status:'Planificada'};
+  const pool=transactionalPool(async(sql)=>{
+    if(['BEGIN','COMMIT'].includes(sql))return {rowCount:0,rows:[]};
+    if(sql.startsWith('insert into loads'))return {rowCount:1,rows:[created]};
+    if(sql.startsWith('insert into audit_logs'))return {rowCount:1,rows:[]};
+    throw new Error(`Consulta inesperada: ${sql}`);
+  });
+  const req={body:{client:'Cliente',guide:'G-1',cargo:'Carga',weight_kg:100,volume_m3:4,value_clp:90000,origin:'A',destination:'B'},resourceCompanyId:10,user:{id:5},ip:'127.0.0.1'};
+  const res=response();await legacyLoadHandler()(req,res,pool);
+  assert.equal(res.statusCode,201);
+  assert.deepEqual(res.payload,created);
+  const insert=pool.calls.find(call=>call.sql.startsWith('insert into loads'));
+  assert.deepEqual(insert.values,[10,'Cliente','G-1','Carga',100,4,90000,null,'A','B','Planificada']);
+  const audit=auditCall(pool.calls);
+  assert.deepEqual(audit.values.slice(0,7),[10,5,'create','loads','31',null,created]);
+  assert.ok(indexOf(pool.calls,'BEGIN')<indexOf(pool.calls,'insert into loads'));
+  assert.ok(indexOf(pool.calls,'insert into loads')<indexOf(pool.calls,'insert into audit_logs'));
+  assert.ok(indexOf(pool.calls,'insert into audit_logs')<indexOf(pool.calls,'COMMIT'));
+  assert.equal(pool.calls.filter(call=>call.sql.startsWith('insert into loads')).length,1);
+  assert.equal(pool.calls.filter(call=>call.sql.startsWith('insert into audit_logs')).length,1);
+});
+
+test('loads legacy: fallo del INSERT ejecuta ROLLBACK sin auditoría ni COMMIT',async()=>{
+  const pool=transactionalPool(async(sql)=>{
+    if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
+    if(sql.startsWith('insert into loads'))throw new Error('insert failed');
+    throw new Error(`Consulta inesperada: ${sql}`);
+  });
+  const req={body:{cargo:'Carga'},resourceCompanyId:10,user:{id:5}};
+  const res=response();await legacyLoadHandler()(req,res,pool);
+  assert.equal(res.statusCode,400);
+  assert.ok(indexOf(pool.calls,'insert into loads')<indexOf(pool.calls,'ROLLBACK'));
+  assert.equal(pool.calls.some(call=>call.sql.startsWith('insert into audit_logs')),false);
+  assert.equal(pool.calls.some(call=>call.sql==='COMMIT'),false);
+  assert.equal(pool.calls.at(-1).sql,'ROLLBACK');
+});
+
+test('loads legacy: fallo de auditoría revierte la carga sin COMMIT',async()=>{
+  const created={id:31,company_id:10,cargo:'Carga'};
+  const pool=transactionalPool(async(sql)=>{
+    if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
+    if(sql.startsWith('insert into loads'))return {rowCount:1,rows:[created]};
+    if(sql.startsWith('insert into audit_logs'))throw new Error('audit failed');
+    throw new Error(`Consulta inesperada: ${sql}`);
+  });
+  const req={body:{cargo:'Carga'},resourceCompanyId:10,user:{id:5}};
+  const res=response();await legacyLoadHandler()(req,res,pool);
+  assert.equal(res.statusCode,400);
+  assert.ok(indexOf(pool.calls,'insert into loads')<indexOf(pool.calls,'insert into audit_logs'));
+  assert.ok(indexOf(pool.calls,'insert into audit_logs')<indexOf(pool.calls,'ROLLBACK'));
+  assert.equal(pool.calls.some(call=>call.sql==='COMMIT'),false);
+  assert.equal(pool.calls.at(-1).sql,'ROLLBACK');
+});
+
+test('loads legacy: validación de camión se conserva antes de abrir la transacción',async()=>{
+  const pool=transactionalPool(async(sql,values)=>{
+    if(sql.startsWith('select id from trucks')){
+      assert.deepEqual(values,['OTRA-1',10]);
+      return {rowCount:0,rows:[]};
+    }
+    throw new Error(`Consulta inesperada: ${sql}`);
+  });
+  const req={body:{cargo:'Carga',truck:'OTRA-1'},resourceCompanyId:10,user:{id:5}};
+  const res=response();await legacyLoadHandler()(req,res,pool);
+  assert.equal(res.statusCode,403);
+  assert.equal(pool.calls.length,1);
+  assert.equal(pool.calls.some(call=>call.sql==='BEGIN'),false);
+  assert.equal(pool.calls.some(call=>call.sql.startsWith('insert into loads')),false);
+  assert.equal(pool.calls.some(call=>call.sql.startsWith('insert into audit_logs')),false);
+});
+
+test('loads legacy: conserva middleware de empresa y contexto transversal admin',async()=>{
+  const source=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
+  assert.match(source,/app\.post\("\/api\/loads",requirePermission\("loads\.manage"\),requireCreationCompany,/);
+  assert.match(source,/const companyId=req=>isAdmin\(req\)\?\(req\.body\?\.company_id\|\|null\):\(req\.user\?\.company_id\|\|null\)/);
+  const created={id:31,company_id:20,cargo:'Carga'};
+  const pool=transactionalPool(async(sql)=>{
+    if(['BEGIN','COMMIT'].includes(sql))return {rowCount:0,rows:[]};
+    if(sql.startsWith('insert into loads'))return {rowCount:1,rows:[created]};
+    if(sql.startsWith('insert into audit_logs'))return {rowCount:1,rows:[]};
+    throw new Error(`Consulta inesperada: ${sql}`);
+  });
+  const req={body:{cargo:'Carga',company_id:20},resourceCompanyId:20,user:{id:1,role_code:'admin'}};
+  const res=response();await legacyLoadHandler()(req,res,pool);
+  assert.equal(res.statusCode,201);
+  const insert=pool.calls.find(call=>call.sql.startsWith('insert into loads'));
+  assert.equal(insert.values[0],20);
+  const audit=auditCall(pool.calls);
+  assert.deepEqual(audit.values.slice(0,5),[20,1,'create','loads','31']);
 });
 
 test('eventos, checklist, cargas y POD escriben audit_logs antes de COMMIT',async()=>{
