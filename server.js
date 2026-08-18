@@ -5,6 +5,8 @@ const path=require("path");
 const {registerCoreRoutes,initializeCorePlatform}=require("./core-api");
 const {registerOperationsRoutes}=require("./operations-api");
 const {registerFleetRoutes}=require("./fleet-api");
+const {registerGeographyRoutes}=require("./geography-api");
+const {createGeocoder}=require("./geocoding");
 const {registerAuthRoutes,authMiddleware,requirePermission}=require("./auth");
 const {writeAudit}=require("./audit");
 const {registerAdminRoutes}=require("./admin-api");
@@ -35,6 +37,7 @@ app.use("/api",authMiddleware.bind(null,pool));
 registerCoreRoutes(app,pool);
 registerOperationsRoutes(app,pool);
 registerFleetRoutes(app,pool);
+registerGeographyRoutes(app,pool,createGeocoder());
 registerAdminRoutes(app,pool);
 
 app.get("/api/dashboard",requirePermission("dashboard.read"),async(req,res)=>{try{const scoped=isAdmin(req)?{clause:'',values:[]}:{clause:' where company_id=$1',values:[companyId(req)]};const q=async sql=>Number((await pool.query(sql,scoped.values)).rows[0].n||0);res.json({trucks:await q(`select count(*) n from trucks${scoped.clause}`),enroute:await q(`select count(*) n from trucks${scoped.clause}${scoped.clause?' and':' where'} status='En ruta'`),loads:await q(`select count(*) n from loads${scoped.clause}`),alerts:await q(`select count(*) n from alerts${scoped.clause}${scoped.clause?' and':' where'} resolved=false`),fuel:await q(`select coalesce(sum(total_clp),0) n from fuel${scoped.clause}`),km:await q(`select coalesce(sum(km),0) n from trucks${scoped.clause}`)})}catch(e){res.status(500).json({error:"No se pudo cargar el dashboard"})}});
@@ -55,6 +58,6 @@ app.post("/api/maintenance",requirePermission("maintenance.manage"),requireCreat
 app.delete("/api/:table/:id",requireTablePermission(writePermissions),async(req,res)=>{if(!safeTable(req.params.table))return res.sendStatus(404);const client=await pool.connect();try{await client.query('BEGIN');const params=isAdmin(req)?[req.params.id]:[req.params.id,companyId(req)];const filter=isAdmin(req)?'where id=$1':'where id=$1 and company_id=$2';const r=await client.query(`delete from ${req.params.table} ${filter} returning *`,params);if(!r.rowCount){await client.query('ROLLBACK');return res.sendStatus(404)}const before=r.rows[0];await writeAudit(client,req,{companyId:before.company_id,action:'delete',entity:req.params.table,entityId:req.params.id,beforeData:before});await client.query('COMMIT');res.sendStatus(204)}catch(e){await client.query('ROLLBACK');res.status(400).json({error:"No se pudo eliminar el registro"})}finally{client.release()}});
 
 app.use((req,res,next)=>{if(req.method==="GET"&&!req.path.startsWith("/api/"))return res.sendFile(path.join(__dirname,"public","index.html"));next()});
-async function initializeDatabase(){const schema=fs.readFileSync(path.join(__dirname,"schema.sql"),"utf8");await pool.query(schema);const{rows}=await pool.query("select count(*)::int as count from trucks");if(rows[0].count===0){const seed=fs.readFileSync(path.join(__dirname,"seed.sql"),"utf8");await pool.query(seed);console.log("Base de datos inicializada con datos demo.")}await initializeCorePlatform(pool);for(const file of ["003_auth_rbac.sql","004_operations.sql","005_trip_links.sql","006_admin_settings.sql","007_preflight_integrity.sql","008_fleet_phase3_gps.sql"]){const migration=fs.readFileSync(path.join(__dirname,"migrations",file),"utf8");await pool.query(migration)}}
+async function initializeDatabase(){const schema=fs.readFileSync(path.join(__dirname,"schema.sql"),"utf8");await pool.query(schema);const{rows}=await pool.query("select count(*)::int as count from trucks");if(rows[0].count===0){const seed=fs.readFileSync(path.join(__dirname,"seed.sql"),"utf8");await pool.query(seed);console.log("Base de datos inicializada con datos demo.")}await initializeCorePlatform(pool);for(const file of ["003_auth_rbac.sql","004_operations.sql","005_trip_links.sql","006_admin_settings.sql","007_preflight_integrity.sql","008_fleet_phase3_gps.sql","009_operational_geography.sql"]){const migration=fs.readFileSync(path.join(__dirname,"migrations",file),"utf8");await pool.query(migration)}}
 async function start(){await initializeDatabase();const server=app.listen(PORT,()=>console.log(`FleetChile Pro escuchando en puerto ${PORT}`));const shutdown=async()=>{server.close(async()=>{await pool.end();process.exit(0)})};process.on("SIGTERM",shutdown);process.on("SIGINT",shutdown)}
 start().catch(err=>{console.error("No se pudo iniciar FleetChile:",err.message);process.exit(1)});
