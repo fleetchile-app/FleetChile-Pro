@@ -51,7 +51,8 @@ function poolWith(handler){
   return {
     calls,
     async query(sql,values=[]){calls.push({sql,values});return handler(sql,values,calls.length)},
-    async connect(){return this}
+    async connect(){return this},
+    release(){}
   };
 }
 
@@ -169,8 +170,9 @@ test('lookups operacionales con ID reservan $1 y company_id usa $2',async()=>{
     const user={id:5,role_code:'operations',company_id:10,permissions:[config.permission]};
     const {res}=await invoke(app.route(method,path),{body:config.body,user});
     assert.equal(res.statusCode,404,path);
-    assert.match(pool.calls[0].sql,/\bid=\$1 and t\.company_id=\$2/,path);
-    assert.deepEqual(pool.calls[0].values,['7',10],path);
+    const lookup=pool.calls.find(call=>call.sql.includes('from trips t'));
+    assert.match(lookup.sql,/\bid=\$1 and t\.company_id=\$2/,path);
+    assert.deepEqual(lookup.values,['7',10],path);
   }
 });
 
