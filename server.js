@@ -13,6 +13,7 @@ const {initializeDatabase,startApplication,logStartupError}=require("./startup")
 const {registerAuthRoutes,authMiddleware,requirePermission}=require("./auth");
 const {writeAudit}=require("./audit");
 const {registerAdminRoutes}=require("./admin-api");
+const {registerEconomicsRoutes}=require("./economics-api");
 const app=express();const PORT=Number(process.env.PORT||3000);const DATABASE_URL=process.env.DATABASE_URL;
 if(!DATABASE_URL){console.error("Falta DATABASE_URL. Define la variable de entorno antes de iniciar FleetChile.");process.exit(1)}
 const pool=new Pool({connectionString:DATABASE_URL,max:Number(process.env.DB_POOL_MAX||10),idleTimeoutMillis:30000,connectionTimeoutMillis:10000,ssl:process.env.DATABASE_SSL==="true"?{rejectUnauthorized:false}:undefined});
@@ -69,6 +70,7 @@ registerFleetRoutes(app,pool);
 registerGeographyRoutes(app,pool,createGeocoder());
 registerRoutingRoutes(app,pool,createRoutingAdapter());
 registerAdminRoutes(app,pool);
+registerEconomicsRoutes(app,pool);
 
 app.get("/api/dashboard",requirePermission("dashboard.read"),async(req,res)=>{try{const scoped=isAdmin(req)?{clause:'',values:[]}:{clause:' where company_id=$1',values:[companyId(req)]};const q=async sql=>Number((await pool.query(sql,scoped.values)).rows[0].n||0);res.json({trucks:await q(`select count(*) n from trucks${scoped.clause}`),enroute:await q(`select count(*) n from trucks${scoped.clause}${scoped.clause?' and':' where'} status='En ruta'`),loads:await q(`select count(*) n from loads${scoped.clause}`),alerts:await q(`select count(*) n from alerts${scoped.clause}${scoped.clause?' and':' where'} resolved=false`),fuel:await q(`select coalesce(sum(total_clp),0) n from fuel${scoped.clause}`),km:await q(`select coalesce(sum(km),0) n from trucks${scoped.clause}`)})}catch(e){res.status(500).json({error:"No se pudo cargar el dashboard"})}});
 
