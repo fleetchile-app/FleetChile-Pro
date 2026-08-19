@@ -1,4 +1,7 @@
 const {requirePermission}=require('./auth');
+const {writeAudit}=require('./audit');
+
+const rolePermissions=async(db,roleId)=>(await db.query('select p.id,p.code,p.name,p.module from permissions p join role_permissions rp on rp.permission_id=p.id where rp.role_id=$1 order by p.module,p.code',[roleId])).rows;
 
 function registerAdminRoutes(app,pool){
   app.get('/api/public/settings',async(req,res)=>{try{const r=await pool.query("select setting_key,value from system_settings where setting_key in ('appearance.company_name','appearance.language')");const out={};for(const x of r.rows)out[x.setting_key]=x.value;res.json(out)}catch(e){res.status(500).json({error:'No se pudo cargar la configuración pública'})}});
@@ -9,7 +12,26 @@ function registerAdminRoutes(app,pool){
 
   app.get('/api/admin/permissions',adminOnly,async(req,res)=>{try{const r=await pool.query(`select p.id,p.code,p.name,p.module,coalesce(json_agg(json_build_object('role_id',rp.role_id,'role_code',r.code)) filter(where r.id is not null),'[]') roles from permissions p left join role_permissions rp on rp.permission_id=p.id left join roles r on r.id=rp.role_id group by p.id order by p.module,p.code`);res.json(r.rows)}catch(e){res.status(500).json({error:'No se pudieron consultar los permisos'})}});
   app.get('/api/admin/roles/:id/permissions',adminOnly,async(req,res)=>{try{const r=await pool.query('select p.id,p.code,p.name,p.module from permissions p join role_permissions rp on rp.permission_id=p.id where rp.role_id=$1 order by p.module,p.code',[req.params.id]);res.json(r.rows)}catch(e){res.status(500).json({error:'No se pudieron consultar los permisos del rol'})}});
-  app.put('/api/admin/roles/:id/permissions',adminOnly,async(req,res)=>{const ids=Array.isArray(req.body?.permission_ids)?req.body.permission_ids:[];const client=await pool.connect();try{await client.query('begin');await client.query('delete from role_permissions where role_id=$1',[req.params.id]);for(const id of ids)await client.query('insert into role_permissions(role_id,permission_id) values($1,$2) on conflict do nothing',[req.params.id,id]);await client.query('commit');res.json({ok:true})}catch(e){await client.query('rollback');res.status(400).json({error:'No se pudieron guardar los permisos'})}finally{client.release()}});
+  app.put('/api/admin/roles/:id/permissions',adminOnly,async(req,res)=>{
+    const ids=Array.isArray(req.body?.permission_ids)?req.body.permission_ids:[];
+    const client=await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const role=(await client.query('select id,code,name from roles where id=$1 for update',[req.params.id])).rows[0];
+      if(!role){await client.query('ROLLBACK');return res.sendStatus(404);}
+      const beforePermissions=await rolePermissions(client,role.id);
+      await client.query('delete from role_permissions where role_id=$1',[role.id]);
+      for(const id of ids)await client.query('insert into role_permissions(role_id,permission_id) values($1,$2) on conflict do nothing',[role.id,id]);
+      const afterPermissions=await rolePermissions(client,role.id);
+      const roleData={role_id:role.id,role_code:role.code,role_name:role.name};
+      await writeAudit(client,req,{companyId:null,action:'update',entity:'role_permissions',entityId:role.id,beforeData:{...roleData,permissions:beforePermissions},afterData:{...roleData,permissions:afterPermissions}});
+      await client.query('COMMIT');
+      res.json({ok:true});
+    } catch(e){
+      await client.query('ROLLBACK');
+      res.status(500).json({error:'No se pudieron guardar los permisos'});
+    } finally {client.release();}
+  });
 
   app.patch('/api/admin/companies/:id',adminOnly,async(req,res)=>{const b=req.body||{};const fields=[];const vals=[];const add=(f,v)=>{fields.push(`${f}=$${vals.length+1}`);vals.push(v)};['legal_name','rut','trade_name','email','phone','address','commune','region'].forEach(k=>{if(b[k]!==undefined)add(k,b[k]||null)});if(b.active!==undefined)add('active',!!b.active);if(!fields.length)return res.status(400).json({error:'No hay cambios'});vals.push(req.params.id);try{const r=await pool.query(`update companies set ${fields.join(',')},updated_at=now() where id=$${vals.length} returning *`,vals);if(!r.rowCount)return res.sendStatus(404);res.json(r.rows[0])}catch(e){res.status(400).json({error:'No se pudo actualizar la empresa'})}});
 
