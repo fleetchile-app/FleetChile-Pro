@@ -33,6 +33,32 @@ async function createLegacyLoad(req,res,pool){
  const db=await pool.connect();
  try{await db.query('BEGIN');const r=await db.query("insert into loads(company_id,client,guide,cargo,weight_kg,volume_m3,value_clp,truck,origin,destination,status) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *",[req.resourceCompanyId,client||null,guide||null,cargo||null,weight_kg,volume_m3,value_clp,truck||null,origin||null,destination||null,status]);await writeAudit(db,req,{companyId:req.resourceCompanyId,action:'create',entity:'loads',entityId:r.rows[0].id,afterData:r.rows[0]});await db.query('COMMIT');res.status(201).json(r.rows[0])}catch(e){await db.query('ROLLBACK');res.status(400).json({error:"No se pudo crear la carga"})}finally{db.release()}
 }
+const parseLegacyCoordinate=value=>{
+ if(typeof value!=='number'&&typeof value!=='string')return null;
+ if(typeof value==='string'&&value.trim()==='')return null;
+ const number=Number(value);
+ return Number.isFinite(number)?number:null;
+};
+async function updateLegacyTruckLocation(req,res,pool){
+ const{location,km,status,speed_kmh=0}=req.body;
+ if(req.body.lat===null||req.body.lat===undefined||req.body.lng===null||req.body.lng===undefined)return res.status(400).json({error:"lat y lng son obligatorios"});
+ const lat=parseLegacyCoordinate(req.body.lat),lng=parseLegacyCoordinate(req.body.lng);
+ if(lat===null||lat<-90||lat>90||lng===null||lng<-180||lng>180)return res.status(400).json({error:"lat o lng no válidos"});
+ const db=await pool.connect();
+ try{
+  await db.query('BEGIN');
+  const params=isAdmin(req)?[lat,lng,location,km,status,req.params.id]:[lat,lng,location,km,status,req.params.id,companyId(req)];
+  const filter=isAdmin(req)?'where id=$6':'where id=$6 and company_id=$7';
+  const r=await db.query(`update trucks set lat=coalesce($1,lat),lng=coalesce($2,lng),location=coalesce($3,location),km=coalesce($4,km),status=coalesce($5,status) ${filter} returning *`,params);
+  if(!r.rowCount){await db.query('ROLLBACK');return res.sendStatus(404)}
+  await db.query("insert into telemetry(truck_id,lat,lng,speed_kmh,km,recorded_at) values($1,$2,$3,$4,$5,now())",[req.params.id,lat,lng,speed_kmh,km??r.rows[0].km??0]);
+  await db.query('COMMIT');
+  res.json(r.rows[0]);
+ }catch(e){
+  await db.query('ROLLBACK');
+  res.status(400).json({error:"No se pudo actualizar la posición GPS"});
+ }finally{db.release()}
+}
 
 registerAuthRoutes(app,pool);
 registerHealthRoutes(app,pool);
@@ -52,7 +78,7 @@ app.get("/api/:table",requireTablePermission(readPermissions),async(req,res)=>{i
 app.get("/api/trucks/:id/history",requirePermission("gps.read"),async(req,res)=>{try{const params=isAdmin(req)?[req.params.id]:[req.params.id,companyId(req)];const companyFilter=isAdmin(req)?'':' and t.company_id=$2';res.json((await pool.query(`select telemetry.* from telemetry join trucks t on t.id=telemetry.truck_id where telemetry.truck_id=$1${companyFilter} order by recorded_at desc limit 100`,params)).rows)}catch(e){res.status(500).json({error:"No se pudo consultar el historial GPS"})}});
 
 app.post("/api/trucks",requirePermission("fleet.manage"),requireCreationCompany,async(req,res)=>{const{patente,tipo,capacidad_t,driver,status="Disponible",km=0,lat=null,lng=null,location=""}=req.body;if(!patente||!tipo||capacidad_t===undefined)return res.status(400).json({error:"patente, tipo y capacidad_t son obligatorios"});try{const r=await pool.query("insert into trucks(company_id,patente,tipo,capacidad_t,driver,status,km,lat,lng,location) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *",[req.resourceCompanyId,patente.trim().toUpperCase(),tipo,capacidad_t,driver||null,status,km,lat,lng,location]);res.status(201).json(r.rows[0])}catch(e){res.status(400).json({error:e.code==="23505"?"La patente ya existe":"No se pudo crear el camión"})}});
-app.patch("/api/trucks/:id/location",requirePermission("fleet.manage"),async(req,res)=>{const{lat,lng,location,km,status,speed_kmh=0}=req.body;if(lat===undefined||lng===undefined)return res.status(400).json({error:"lat y lng son obligatorios"});try{const params=isAdmin(req)?[lat,lng,location,km,status,req.params.id]:[lat,lng,location,km,status,req.params.id,companyId(req)];const filter=isAdmin(req)?'where id=$6':'where id=$6 and company_id=$7';const r=await pool.query(`update trucks set lat=coalesce($1,lat),lng=coalesce($2,lng),location=coalesce($3,location),km=coalesce($4,km),status=coalesce($5,status) ${filter} returning *`,params);if(!r.rowCount)return res.sendStatus(404);await pool.query("insert into telemetry(truck_id,lat,lng,speed_kmh,km,recorded_at) values($1,$2,$3,$4,$5,now())",[req.params.id,lat,lng,speed_kmh,km??r.rows[0].km??0]);res.json(r.rows[0])}catch(e){res.status(400).json({error:"No se pudo actualizar la posición GPS"})}});
+app.patch("/api/trucks/:id/location",requirePermission("fleet.manage"),(req,res)=>updateLegacyTruckLocation(req,res,pool));
 
 app.post("/api/routes",requirePermission("trips.manage"),requireCreationCompany,async(req,res)=>{const{truck,origin,destination,distance_km=0,progress=0,status="Planificada",eta=null}=req.body;const client=await pool.connect();try{await client.query('BEGIN');if(truck&&!await legacyTruckBelongs(client,truck,req.resourceCompanyId)){await client.query('ROLLBACK');return res.status(403).json({error:"El camión no pertenece a la empresa de la ruta"})}const r=await client.query("insert into routes(company_id,truck,origin,destination,distance_km,progress,status,eta) values($1,$2,$3,$4,$5,$6,$7,$8) returning *",[req.resourceCompanyId,truck||null,origin||null,destination||null,distance_km,progress,status,eta]);await writeAudit(client,req,{companyId:req.resourceCompanyId,action:'create',entity:'route',entityId:r.rows[0].id,afterData:r.rows[0]});await client.query('COMMIT');res.status(201).json(r.rows[0])}catch(e){await client.query('ROLLBACK');res.status(400).json({error:"No se pudo crear la ruta"})}finally{client.release()}});
 app.post("/api/loads",requirePermission("loads.manage"),requireCreationCompany,(req,res)=>createLegacyLoad(req,res,pool));

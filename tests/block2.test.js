@@ -138,7 +138,7 @@ test('detalle operacional expone status_history separado de events y ordenado',a
     if(sql.includes('from trips t left join trucks'))return {rowCount:1,rows:[trip]};
     if(sql.startsWith('select * from trip_events'))return {rowCount:1,rows:[event]};
     if(sql.startsWith('select * from trip_status_history'))return {rowCount:1,rows:[history]};
-    if(sql.startsWith('select * from trip_loads')||sql.startsWith('select * from vehicle_checklists')||sql.startsWith('select * from trip_delivery_proofs'))return {rowCount:0,rows:[]};
+    if(sql.startsWith('select * from trip_loads')||sql.includes('from vehicle_checklists vc')||sql.startsWith('select * from trip_delivery_proofs'))return {rowCount:0,rows:[]};
     throw new Error(`Consulta inesperada: ${sql} ${JSON.stringify(values)}`);
   });
   const app=fakeApp();await registerOperationsRoutes(app,pool);
@@ -558,7 +558,7 @@ test('trip_loads: detalle autoriza el viaje antes de devolver loads filtradas po
       assert.equal(calls.length>1,true);
       return {rowCount:1,rows:[load]};
     }
-    if(sql.startsWith('select * from trip_events')||sql.startsWith('select * from trip_status_history')||sql.startsWith('select * from vehicle_checklists')||sql.startsWith('select * from trip_delivery_proofs'))return {rowCount:0,rows:[]};
+    if(sql.startsWith('select * from trip_events')||sql.startsWith('select * from trip_status_history')||sql.includes('from vehicle_checklists vc')||sql.startsWith('select * from trip_delivery_proofs'))return {rowCount:0,rows:[]};
     throw new Error(`Consulta inesperada: ${sql} ${JSON.stringify(values)}`);
   });
   const app=fakeApp();await registerOperationsRoutes(app,pool);
