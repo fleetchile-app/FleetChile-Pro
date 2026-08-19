@@ -445,16 +445,17 @@ test('posiciones y track de camión usan $2 para company_id',async()=>{
 
 test('resolución de alerta aplica RBAC y company_id en $2',async()=>{
   const app=fakeApp();
-  const pool=poolWith(async(sql,values)=>Number(values[1])===10?{rowCount:1,rows:[{id:7,company_id:10,resolved:true}]}:{rowCount:0,rows:[]});
+  const pool=poolWith(async(sql,values)=>{if(sql==='BEGIN'||sql==='COMMIT')return {rowCount:0,rows:[]};if(sql.includes('from alerts a'))return Number(values[1])===10?{rowCount:1,rows:[{id:7,company_id:10,resolved:false}]}:{rowCount:0,rows:[]};if(sql.startsWith('update alerts'))return {rowCount:1,rows:[{id:7,company_id:10,resolved:true,resolved_at:'2026-08-20T00:00:00Z'}]};throw new Error(`Consulta inesperada: ${sql}`)});
   await registerFleetRoutes(app,pool);
   const {res}=await invoke(app.route('post','/api/fleet/alerts/:id/resolve'));
   assert.equal(res.statusCode,200);
-  assert.match(pool.calls[0].sql,/id=\$1 and a\.company_id=\$2/);
-  assert.deepEqual(pool.calls[0].values,['7',10]);
+  assert.match(pool.calls[1].sql,/id=\$1 and a\.company_id=\$2/);
+  assert.deepEqual(pool.calls[1].values,['7',10]);
+  assert.match(pool.calls[2].sql,/resolved_at=coalesce\(resolved_at,now\(\)\)/);
 });
 
 test('resolución de alerta de otra empresa devuelve 404',async()=>{
-  const app=fakeApp();const pool=poolWith(async()=>({rowCount:0,rows:[]}));await registerFleetRoutes(app,pool);
+  const app=fakeApp();const pool=poolWith(async sql=>{if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};if(sql.includes('from alerts a'))return {rowCount:0,rows:[]};throw new Error(`Consulta inesperada: ${sql}`)});await registerFleetRoutes(app,pool);
   const {res}=await invoke(app.route('post','/api/fleet/alerts/:id/resolve'));
   assert.equal(res.statusCode,404);
 });

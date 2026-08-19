@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS fuel(
  liters NUMERIC DEFAULT 0, price_clp NUMERIC DEFAULT 0, total_clp NUMERIC DEFAULT 0, station TEXT, odometer_km NUMERIC
 );
 CREATE TABLE IF NOT EXISTS alerts(
- id SERIAL PRIMARY KEY, level TEXT, title TEXT, text TEXT, resolved BOOLEAN DEFAULT false, created_at TIMESTAMPTZ DEFAULT now()
+ id SERIAL PRIMARY KEY, level TEXT, title TEXT, text TEXT, resolved BOOLEAN DEFAULT false,
+ source_type TEXT, source_id BIGINT, condition_code TEXT, resolved_at TIMESTAMPTZ,
+ created_at TIMESTAMPTZ DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS telemetry(
  id BIGSERIAL PRIMARY KEY, truck_id INTEGER REFERENCES trucks(id) ON DELETE CASCADE,
