@@ -15,7 +15,12 @@ CREATE TABLE IF NOT EXISTS loads(
  value_clp BIGINT DEFAULT 0, truck TEXT, origin TEXT, destination TEXT, status TEXT DEFAULT 'Planificada', delivered_at TIMESTAMPTZ
 );
 CREATE TABLE IF NOT EXISTS maintenance(
- id SERIAL PRIMARY KEY, truck TEXT, item TEXT, due DATE, cost_clp BIGINT DEFAULT 0, status TEXT DEFAULT 'Pendiente'
+ id SERIAL PRIMARY KEY, truck TEXT, truck_id INTEGER REFERENCES trucks(id) ON DELETE SET NULL,
+ item TEXT, due DATE, cost_clp BIGINT DEFAULT 0, status TEXT DEFAULT 'Pendiente',
+ maintenance_type TEXT, performed_at DATE, odometer_km NUMERIC, workshop TEXT, notes TEXT,
+ parts_description TEXT, parts_cost_clp BIGINT NOT NULL DEFAULT 0, labor_cost_clp BIGINT NOT NULL DEFAULT 0,
+ next_due_date DATE, next_due_odometer_km NUMERIC,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS fuel(
  id SERIAL PRIMARY KEY, date DATE DEFAULT CURRENT_DATE, truck TEXT, truck_id INTEGER REFERENCES trucks(id) ON DELETE SET NULL,

@@ -35,8 +35,13 @@ test('timeouts de migración usan configuración válida y defaults seguros',()=
 });
 
 test('runner incluye la migración aditiva de combustible al final',()=>{
-  assert.equal(MIGRATION_FILES.at(-1),'012_fuel_operations.sql');
+  assert.equal(MIGRATION_FILES.at(-2),'012_fuel_operations.sql');
   assert.equal(MIGRATION_FILES.filter(file=>file==='012_fuel_operations.sql').length,1);
+});
+
+test('runner incluye la migración aditiva de mantenciones al final',()=>{
+  assert.equal(MIGRATION_FILES.at(-1),'013_maintenance_operations.sql');
+  assert.equal(MIGRATION_FILES.filter(file=>file==='013_maintenance_operations.sql').length,1);
 });
 
 test('runner configura timeouts antes de schema y migraciones',async()=>{

@@ -2,7 +2,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const {registerFleetRoutes}=require('../fleet-api');
 
-function fakeApp(){const routes=[];for(const method of ['get','post'])routes[method]=(path,...handlers)=>routes.push({method,path,handlers});routes.route=(method,path)=>{const route=routes.find(item=>item.method===method&&item.path===path);assert.ok(route,`Ruta no registrada: ${method} ${path}`);return route};return routes}
+function fakeApp(){const routes=[];for(const method of ['get','post','patch'])routes[method]=(path,...handlers)=>routes.push({method,path,handlers});routes.route=(method,path)=>{const route=routes.find(item=>item.method===method&&item.path===path);assert.ok(route,`Ruta no registrada: ${method} ${path}`);return route};return routes}
 function response(){return {statusCode:200,payload:undefined,status(code){this.statusCode=code;return this},json(value){this.payload=value;return this},sendStatus(code){this.statusCode=code;return this}}}
 async function invoke(route,overrides={}){const req={user:{id:7,role_code:'operations',company_id:10,permissions:['fuel.manage']},body:{},query:{},params:{},ip:'127.0.0.1',...overrides};const res=response();let index=0;const next=async()=>{const handler=route.handlers[index++];if(handler)return handler(req,res,next)};await next();return res}
 function mockPool(resolver){const calls=[];let releases=0;const client={async query(sql,values=[]){const call={sql,values};calls.push(call);return resolver(sql,values,calls)},release(){releases++}};return {calls,client,get releases(){return releases},async connect(){return client},async query(sql,values=[]){const call={sql,values};calls.push(call);return resolver(sql,values,calls)}}}
