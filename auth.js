@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const {writeAudit} = require('./audit');
 
 const clean = v => typeof v === 'string' ? v.trim() : v;
 const hashPassword = password => new Promise((resolve,reject) => {
@@ -26,6 +27,13 @@ async function userView(pool,userId){
   const r = await pool.query(`select u.id,u.name,u.email,u.phone,u.company_id,u.role_id,r.code role_code,r.name role_name,c.legal_name company_name,
     coalesce((select json_agg(p.code order by p.code) from role_permissions rp join permissions p on p.id=rp.permission_id where rp.role_id=u.role_id),'[]'::json) permissions
     from users u left join roles r on r.id=u.role_id left join companies c on c.id=u.company_id where u.id=$1 and u.active=true`,[userId]);
+  return r.rows[0] || null;
+}
+
+async function userAuditView(db,userId){
+  const r=await db.query(`select u.id,u.name,u.email,u.phone,u.active,u.last_login_at,u.company_id,u.role_id,u.created_at,u.updated_at,
+    r.code role_code,r.name role_name,c.legal_name company_name
+    from users u left join roles r on r.id=u.role_id left join companies c on c.id=u.company_id where u.id=$1`,[userId]);
   return r.rows[0] || null;
 }
 
@@ -59,8 +67,11 @@ function registerAuthRoutes(app,pool){
       const role=(await client.query("select id from roles where code='admin'")).rows[0];
       const password_hash=await hashPassword(String(b.password));
       const u=(await client.query('insert into users(company_id,role_id,name,email,password_hash,phone) values($1,$2,$3,$4,$5,$6) returning id',[company?.id||null,role.id,clean(b.name),clean(b.email).toLowerCase(),password_hash,clean(b.phone)||null])).rows[0];
+      const user=await userView(client,u.id);
+      if(!user) throw new Error('No se pudo obtener el administrador creado');
+      await writeAudit(client,req,{companyId:company?.id||null,action:'create',entity:'user',entityId:u.id,afterData:user});
       await client.query('COMMIT');
-      res.status(201).json({ok:true,user:await userView(pool,u.id)});
+      res.status(201).json({ok:true,user});
     } catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.code==='23505'?'El correo ya existe':'No se pudo crear el administrador'});} finally {client.release();}
   });
 
@@ -100,9 +111,68 @@ function registerAuthRoutes(app,pool){
   app.post('/api/users',...protectedUserRoutes,async(req,res)=>{
     const b=req.body||{}; if(!clean(b.name)||!clean(b.email)||!clean(b.password)||!b.role_id)return res.status(400).json({error:'Nombre, correo, contraseña y rol son obligatorios'});
     if(String(b.password).length<10)return res.status(400).json({error:'La contraseña debe tener al menos 10 caracteres'});
-    try{const ph=await hashPassword(String(b.password));const companyId=req.user.role_code==='admin'?(b.company_id||req.user.company_id):req.user.company_id;const r=await pool.query('insert into users(company_id,role_id,name,email,password_hash,phone) values($1,$2,$3,$4,$5,$6) returning id',[companyId,b.role_id,clean(b.name),clean(b.email).toLowerCase(),ph,clean(b.phone)||null]);res.status(201).json(await userView(pool,r.rows[0].id));}catch(e){res.status(400).json({error:e.code==='23505'?'El correo ya existe':'No se pudo crear el usuario'})}
+    const client=await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const companyId=req.user.role_code==='admin'?(b.company_id||req.user.company_id):req.user.company_id;
+      const role=(await client.query('select id,code from roles where id=$1',[b.role_id])).rows[0];
+      if(!role) throw new Error('Rol no encontrado');
+      if(req.user.role_code!=='admin'&&role.code==='admin'){
+        await client.query('ROLLBACK');
+        return res.status(403).json({error:'No puedes asignar el rol administrador'});
+      }
+      const ph=await hashPassword(String(b.password));
+      const r=await client.query('insert into users(company_id,role_id,name,email,password_hash,phone) values($1,$2,$3,$4,$5,$6) returning id',[companyId,b.role_id,clean(b.name),clean(b.email).toLowerCase(),ph,clean(b.phone)||null]);
+      const user=await userView(client,r.rows[0].id);
+      if(!user) throw new Error('No se pudo obtener el usuario creado');
+      await writeAudit(client,req,{companyId,action:'create',entity:'user',entityId:r.rows[0].id,afterData:user});
+      await client.query('COMMIT');
+      res.status(201).json(user);
+    } catch(e){
+      await client.query('ROLLBACK');
+      res.status(400).json({error:e.code==='23505'?'El correo ya existe':'No se pudo crear el usuario'});
+    } finally {client.release();}
   });
-  app.patch('/api/users/:id',...protectedUserRoutes,async(req,res)=>{const b=req.body||{};try{const fields=[];const vals=[];const add=(sql,v)=>{fields.push(sql);vals.push(v)};if(b.name!==undefined)add('name=$'+(vals.length+1),clean(b.name));if(b.phone!==undefined)add('phone=$'+(vals.length+1),clean(b.phone)||null);if(b.role_id!==undefined)add('role_id=$'+(vals.length+1),b.role_id);if(b.active!==undefined)add('active=$'+(vals.length+1),!!b.active);if(b.password){if(String(b.password).length<10)return res.status(400).json({error:'La contraseña debe tener al menos 10 caracteres'});add('password_hash=$'+(vals.length+1),await hashPassword(String(b.password)));}if(!fields.length)return res.status(400).json({error:'No hay cambios'});vals.push(req.params.id);const r=await pool.query(`update users set ${fields.join(',')},updated_at=now() where id=$${vals.length} and ($${vals.length+1}=true or company_id=$${vals.length+2}) returning id`,[...vals,req.user.role_code==='admin',req.user.company_id]);if(!r.rowCount)return res.sendStatus(404);res.json(await userView(pool,r.rows[0].id));}catch{res.status(400).json({error:'No se pudo actualizar el usuario'})}});
+  app.patch('/api/users/:id',...protectedUserRoutes,async(req,res)=>{
+    const b=req.body||{};
+    if(b.password&&String(b.password).length<10)return res.status(400).json({error:'La contraseña debe tener al menos 10 caracteres'});
+    if(b.name===undefined&&b.phone===undefined&&b.role_id===undefined&&b.active===undefined&&!b.password)return res.status(400).json({error:'No hay cambios'});
+    const client=await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const isAdmin=req.user.role_code==='admin';
+      const locked=(await client.query('select id from users where id=$1 and ($2=true or company_id=$3) for update',[req.params.id,isAdmin,req.user.company_id])).rows[0];
+      if(!locked){await client.query('ROLLBACK');return res.sendStatus(404);}
+      const before=await userAuditView(client,locked.id);
+      if(!before) throw new Error('No se pudo obtener el usuario antes de actualizar');
+      if(b.role_id!==undefined){
+        const role=(await client.query('select id,code from roles where id=$1',[b.role_id])).rows[0];
+        if(!role) throw new Error('Rol no encontrado');
+        if(!isAdmin&&role.code==='admin'){
+          await client.query('ROLLBACK');
+          return res.status(403).json({error:'No puedes asignar el rol administrador'});
+        }
+      }
+      const fields=[];const vals=[];const add=(sql,v)=>{fields.push(sql);vals.push(v)};
+      if(b.name!==undefined)add('name=$'+(vals.length+1),clean(b.name));
+      if(b.phone!==undefined)add('phone=$'+(vals.length+1),clean(b.phone)||null);
+      if(b.role_id!==undefined)add('role_id=$'+(vals.length+1),b.role_id);
+      if(b.active!==undefined)add('active=$'+(vals.length+1),!!b.active);
+      if(b.password)add('password_hash=$'+(vals.length+1),await hashPassword(String(b.password)));
+      vals.push(req.params.id);
+      const r=await client.query(`update users set ${fields.join(',')},updated_at=now() where id=$${vals.length} and ($${vals.length+1}=true or company_id=$${vals.length+2}) returning id`,[...vals,isAdmin,req.user.company_id]);
+      if(!r.rowCount) throw new Error('No se pudo actualizar el usuario autorizado');
+      const after=await userAuditView(client,r.rows[0].id);
+      if(!after) throw new Error('No se pudo obtener el usuario actualizado');
+      const responseUser=await userView(client,r.rows[0].id);
+      await writeAudit(client,req,{companyId:after.company_id,action:'update',entity:'user',entityId:r.rows[0].id,beforeData:before,afterData:after});
+      await client.query('COMMIT');
+      res.json(responseUser);
+    } catch{
+      await client.query('ROLLBACK');
+      res.status(400).json({error:'No se pudo actualizar el usuario'});
+    } finally {client.release();}
+  });
 }
 
 async function authMiddleware(pool,req,res,next){
