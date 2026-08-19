@@ -50,7 +50,8 @@ async function simulateGPS(){const ts=await get("trucks"),t=ts.find(x=>x.status=
 function table(cols,rows,fn){return `<div class="wrap"><table class="table"><thead><tr>${cols.map(c=>`<th>${c}</th>`).join("")}</tr></thead><tbody>${rows.map(x=>`<tr>${fn(x).map(c=>`<td>${c??""}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`}
 function listing(v,label,cols,rows,fn,newForm=v){A.innerHTML=`<div class="card"><div class="toolbar"><input class="search" id="q" placeholder="Buscar ${label.toLowerCase()}..."><button class="primary" onclick="openForm('${newForm}')">+ Nuevo</button></div><div id="tbl">${table(cols,rows,fn)}</div></div>`;document.getElementById("q").oninput=e=>{const q=e.target.value.toLowerCase();document.querySelectorAll("tbody tr").forEach(r=>r.style.display=r.textContent.toLowerCase().includes(q)?"":"none")}}
 const truck=x=>[x.patente,x.tipo,x.capacidad_t+" t",x.driver||"—",badge(x.status),x.location||"—"];
-const driver=x=>[x.name,x.rut||"—",x.license||"—",x.expiry||"—",badge(x.status)];
+function formatDateOnly(v){if(!v)return "—";const m=String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);return m?`${m[3]}-${m[2]}-${m[1]}`:"—"}
+const driver=x=>[x.name,x.rut||"—",x.license||"—",formatDateOnly(x.expiry),badge(x.status)];
 const route=x=>[x.truck,x.origin,x.destination,(x.distance_km||0)+" km",(x.progress||0)+"%",badge(x.status)];
 const load=x=>[x.client,x.guide,x.cargo,Number(x.weight_kg||0).toLocaleString("es-CL")+" kg",x.truck,`${x.origin} → ${x.destination}`,badge(x.status)];
 const maint=x=>[x.truck,x.item,x.due,money(x.cost_clp),badge(x.status)];
