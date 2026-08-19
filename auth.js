@@ -71,9 +71,19 @@ function registerAuthRoutes(app,pool){
       const r=await pool.query('select id,password_hash from users where lower(email)=lower($1) and active=true',[email]);
       if(!r.rowCount || !(await verifyPassword(password,r.rows[0].password_hash))) return res.status(401).json({error:'Credenciales inválidas'});
       const raw=token();
-      await pool.query("insert into user_sessions(user_id,token_hash,expires_at,ip,user_agent) values($1,$2,now()+interval '12 hours',$3,$4)",[r.rows[0].id,tokenHash(raw),req.ip,req.get('user-agent')||null]);
-      await pool.query('update users set last_login_at=now() where id=$1',[r.rows[0].id]);
-      res.json({token:raw,user:await userView(pool,r.rows[0].id)});
+      const client=await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("insert into user_sessions(user_id,token_hash,expires_at,ip,user_agent) values($1,$2,now()+interval '12 hours',$3,$4)",[r.rows[0].id,tokenHash(raw),req.ip,req.get('user-agent')||null]);
+        await client.query('update users set last_login_at=now() where id=$1',[r.rows[0].id]);
+        const user=await userView(client,r.rows[0].id);
+        if(!user) throw new Error('Usuario no disponible después de autenticar');
+        await client.query('COMMIT');
+        res.json({token:raw,user});
+      } catch {
+        await client.query('ROLLBACK');
+        res.status(500).json({error:'No se pudo iniciar sesión'});
+      } finally {client.release();}
     } catch { res.status(500).json({error:'No se pudo iniciar sesión'}); }
   });
 

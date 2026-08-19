@@ -72,6 +72,41 @@ async function passwordHash(password){
   return `scrypt$${salt}$${key.toString('hex')}`;
 }
 
+function loginPool(stored,failAt=null){
+  const poolCalls=[];const clientCalls=[];let releases=0;let connects=0;
+  const client={
+    async query(sql,values=[]){
+      clientCalls.push({sql,values});
+      if(failAt&&sql.startsWith(failAt))throw new Error(`${failAt} failed`);
+      if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return {rowCount:0,rows:[]};
+      if(sql.startsWith('insert into user_sessions')||sql.startsWith('update users set last_login_at'))return {rowCount:1,rows:[]};
+      if(sql.includes('from users u left join roles'))return failAt==='USER_VIEW_NULL'?{rowCount:0,rows:[]}:{rowCount:1,rows:[{id:5,company_id:10,role_code:'operations',permissions:['trips.manage']}]};
+      throw new Error(`Consulta transaccional inesperada: ${sql}`);
+    },
+    release(){releases++}
+  };
+  return {
+    poolCalls,clientCalls,
+    get releases(){return releases},get connects(){return connects},
+    async query(sql,values=[]){
+      poolCalls.push({sql,values});
+      if(sql.startsWith('select id,password_hash from users'))return {rowCount:1,rows:[{id:5,password_hash:stored}]};
+      throw new Error(`pool.query inesperado: ${sql}`);
+    },
+    async connect(){connects++;return client}
+  };
+}
+
+async function invokeLogin(pool){
+  const app=fakeApp();registerAuthRoutes(app,pool);
+  return invoke(app.route('post','/api/auth/login'),{
+    user:undefined,
+    body:{email:'operaciones@example.test',password:'clave-segura-123'},
+    ip:'127.0.0.1',
+    get:name=>name==='user-agent'?'node-test':''
+  });
+}
+
 test('authMiddleware rechaza una sesión inexistente',async()=>{
   const pool=poolWith(async()=>{throw new Error('No debe consultar sin token')});
   const req={get:()=>'',user:undefined};
@@ -100,24 +135,46 @@ test('authMiddleware acepta una sesión válida y carga permisos',async()=>{
 
 test('login válido conserva la creación de sesión y devuelve el usuario',async()=>{
   const stored=await passwordHash('clave-segura-123');
-  const pool=poolWith(async(sql)=>{
-    if(sql.startsWith('select id,password_hash from users'))return {rowCount:1,rows:[{id:5,password_hash:stored}]};
-    if(sql.startsWith('insert into user_sessions'))return {rowCount:1,rows:[]};
-    if(sql.startsWith('update users set last_login_at'))return {rowCount:1,rows:[]};
-    if(sql.includes('from users u left join roles'))return {rowCount:1,rows:[{id:5,company_id:10,role_code:'operations',permissions:['trips.manage']}]};
-    throw new Error(`Consulta inesperada: ${sql}`);
-  });
-  const app=fakeApp();registerAuthRoutes(app,pool);
-  const {res}=await invoke(app.route('post','/api/auth/login'),{
-    user:undefined,
-    body:{email:'operaciones@example.test',password:'clave-segura-123'},
-    ip:'127.0.0.1',
-    get:name=>name==='user-agent'?'node-test':''
-  });
+  const pool=loginPool(stored);
+  const {res}=await invokeLogin(pool);
   assert.equal(res.statusCode,200);
   assert.equal(typeof res.payload.token,'string');
   assert.equal(res.payload.user.company_id,10);
-  assert.equal(pool.calls.some(call=>call.sql.startsWith('insert into user_sessions')),true);
+  assert.deepEqual(pool.clientCalls.map(call=>call.sql==='BEGIN'||call.sql==='COMMIT'?call.sql:call.sql.startsWith('insert into user_sessions')?'SESSION':call.sql.startsWith('update users set last_login_at')?'LAST_LOGIN':'USER_VIEW'),['BEGIN','SESSION','LAST_LOGIN','USER_VIEW','COMMIT']);
+  assert.equal(pool.poolCalls.length,1);
+  assert.match(pool.poolCalls[0].sql,/^select id,password_hash from users/);
+  assert.equal(pool.connects,1);
+  assert.equal(pool.releases,1);
+});
+
+for(const failure of [
+  {name:'INSERT user_sessions',sql:'insert into user_sessions',before:['BEGIN','SESSION','ROLLBACK']},
+  {name:'UPDATE last_login_at',sql:'update users set last_login_at',before:['BEGIN','SESSION','LAST_LOGIN','ROLLBACK']},
+  {name:'userView',sql:'select u.id,u.name',before:['BEGIN','SESSION','LAST_LOGIN','USER_VIEW','ROLLBACK']},
+  {name:'COMMIT',sql:'COMMIT',before:['BEGIN','SESSION','LAST_LOGIN','USER_VIEW','COMMIT','ROLLBACK']}
+])test(`login revierte y no entrega token si falla ${failure.name}`,async()=>{
+  const pool=loginPool(await passwordHash('clave-segura-123'),failure.sql);
+  const {res}=await invokeLogin(pool);
+  assert.equal(res.statusCode,500);
+  assert.equal(res.payload.token,undefined);
+  assert.deepEqual(res.payload,{error:'No se pudo iniciar sesión'});
+  assert.deepEqual(pool.clientCalls.map(call=>call.sql==='BEGIN'||call.sql==='COMMIT'||call.sql==='ROLLBACK'?call.sql:call.sql.startsWith('insert into user_sessions')?'SESSION':call.sql.startsWith('update users set last_login_at')?'LAST_LOGIN':'USER_VIEW'),failure.before);
+  assert.equal(pool.clientCalls.at(-1).sql,'ROLLBACK');
+  assert.equal(pool.poolCalls.length,1);
+  assert.equal(pool.connects,1);
+  assert.equal(pool.releases,1);
+});
+
+test('login revierte y no entrega token si userView no encuentra al usuario',async()=>{
+  const pool=loginPool(await passwordHash('clave-segura-123'),'USER_VIEW_NULL');
+  const {res}=await invokeLogin(pool);
+  assert.equal(res.statusCode,500);
+  assert.deepEqual(res.payload,{error:'No se pudo iniciar sesión'});
+  assert.equal(res.payload.token,undefined);
+  assert.deepEqual(pool.clientCalls.map(call=>call.sql==='BEGIN'||call.sql==='ROLLBACK'?call.sql:call.sql.startsWith('insert into user_sessions')?'SESSION':call.sql.startsWith('update users set last_login_at')?'LAST_LOGIN':'USER_VIEW'),['BEGIN','SESSION','LAST_LOGIN','USER_VIEW','ROLLBACK']);
+  assert.equal(pool.clientCalls.some(call=>call.sql==='COMMIT'),false);
+  assert.equal(pool.connects,1);
+  assert.equal(pool.releases,1);
 });
 
 test('RBAC permite detalle de viaje con trips.manage y usa company_id en $2',async()=>{
