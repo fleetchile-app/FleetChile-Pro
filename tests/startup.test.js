@@ -2,7 +2,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const path=require('path');
 const {registerHealthRoutes}=require('../health-api');
-const {initializeDatabase,startApplication,migrationTimeouts}=require('../startup');
+const {MIGRATION_FILES,initializeDatabase,startApplication,migrationTimeouts}=require('../startup');
 const {checkSyntax}=require('../scripts/check-syntax');
 
 function fakeApp(){const routes=[];return {routes,get(routePath,handler){routes.push({path:routePath,handler})},route(routePath){const route=routes.find(item=>item.path===routePath);assert.ok(route,`Ruta no registrada: ${routePath}`);return route.handler}}}
@@ -32,6 +32,11 @@ test('/api/ready responde 503 cuando PostgreSQL falla',async()=>{
 test('timeouts de migración usan configuración válida y defaults seguros',()=>{
   assert.deepEqual(migrationTimeouts({MIGRATION_LOCK_TIMEOUT_MS:'7000',MIGRATION_STATEMENT_TIMEOUT_MS:'90000'}),{lockTimeoutMs:7000,statementTimeoutMs:90000});
   assert.deepEqual(migrationTimeouts({MIGRATION_LOCK_TIMEOUT_MS:'0',MIGRATION_STATEMENT_TIMEOUT_MS:'invalid'}),{lockTimeoutMs:5000,statementTimeoutMs:120000});
+});
+
+test('runner incluye la migración aditiva de combustible al final',()=>{
+  assert.equal(MIGRATION_FILES.at(-1),'012_fuel_operations.sql');
+  assert.equal(MIGRATION_FILES.filter(file=>file==='012_fuel_operations.sql').length,1);
 });
 
 test('runner configura timeouts antes de schema y migraciones',async()=>{
