@@ -1,0 +1,16 @@
+.gps-signal{display:inline-flex;align-items:center;width:max-content;max-width:100%;padding:5px 9px;border-radius:999px;font-size:10px;font-weight:800;background:#edf2f7;color:#52657a}
+.gps-signal.recent{background:#e0f3e8;color:#17663f}
+.gps-signal.old{background:#fff1d6;color:#8a5a08}
+.gps-signal.none{background:#edf2f7;color:#52657a}
+.gps-signal.error,.gps-history-state.error,.gps-query-error{background:#fde5e5;color:#a52b2b}
+.gps-query-error{border:1px solid #f4c6c6;border-radius:7px;padding:9px;margin-bottom:10px;font-size:11px}
+.gps-history-head{display:flex;justify-content:space-between;align-items:flex-end;margin-top:22px}
+.gps-history-head h3{margin:0 0 3px}
+.gps-history-filters{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin:12px 0}
+.gps-history-filters .primary{height:39px}
+.truck-track-map{height:280px;border-radius:8px;overflow:hidden;background:#e4edf5;margin-bottom:12px}
+.gps-history-state{font-size:12px}
+.gps-history-state.loading{padding:18px;text-align:center;color:#64788d}
+.gps-history-state.error{padding:12px;border:1px solid #f4c6c6;border-radius:7px}
+.gps-history-state .table{min-width:680px}
+@media(max-width:700px){.gps-history-filters{grid-template-columns:1fr}.truck-track-map{height:230px}.gps-signal{white-space:normal}}

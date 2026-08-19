@@ -94,3 +94,85 @@ test('GPS rechaza coordenadas fuera de rango antes de consultar PostgreSQL',asyn
     assert.deepEqual(res.payload,{error:'latitud o longitud no válidas'});
   }
 });
+
+test('GPS live devuelve la posición actual de la empresa y conserva camiones sin señal',async()=>{
+  const rows=[
+    {id:3,patente:'ABCD12',lat:-33.45,lng:-70.66,speed_kmh:42,recorded_at:'2026-08-19T12:00:00.000Z'},
+    {id:4,patente:'EFGH34',lat:null,lng:null,speed_kmh:0,recorded_at:null}
+  ];
+  const pool=transactionalPool(async(sql,values)=>{
+    assert.match(sql,/from trucks t left join lateral/);
+    assert.match(sql,/order by recorded_at desc,id desc limit 1/);
+    assert.match(sql,/where t\.company_id=\$1/);
+    assert.match(sql,/order by t\.patente$/);
+    assert.deepEqual(values,[10]);
+    return {rowCount:rows.length,rows};
+  });
+  const app=fakeApp();await registerFleetRoutes(app,pool);
+  const {res}=await invoke(app.route('get','/api/fleet/live'));
+  assert.equal(res.statusCode,200);
+  assert.deepEqual(res.payload,rows);
+  assert.equal(pool.calls.length,1);
+});
+
+test('GPS historial por camión filtra el período y usa orden determinista',async()=>{
+  const rows=[
+    {id:12,truck_id:3,recorded_at:'2026-08-19T12:00:00.000Z'},
+    {id:11,truck_id:3,recorded_at:'2026-08-19T12:00:00.000Z'}
+  ];
+  const pool=transactionalPool(async(sql,values)=>{
+    assert.match(sql,/te\.truck_id=\$1 and t\.company_id=\$2/);
+    assert.match(sql,/te\.recorded_at >= \$3/);
+    assert.match(sql,/te\.recorded_at <= \$4/);
+    assert.match(sql,/order by te\.recorded_at desc,te\.id desc limit 1000$/);
+    assert.deepEqual(values,[3,10,'2026-08-19T10:00:00.000Z','2026-08-19T13:00:00.000Z']);
+    return {rowCount:rows.length,rows};
+  });
+  const app=fakeApp();await registerFleetRoutes(app,pool);
+  const {res}=await invoke(app.route('get','/api/fleet/trucks/:id/positions'),{query:{from:'2026-08-19T10:00:00Z',to:'2026-08-19T13:00:00Z'}});
+  assert.equal(res.statusCode,200);
+  assert.deepEqual(res.payload,rows);
+});
+
+test('GPS historial por camión devuelve una colección vacía sin inventar posiciones',async()=>{
+  const pool=transactionalPool(async(sql,values)=>{
+    assert.match(sql,/from telemetry te join trucks t/);
+    assert.deepEqual(values,[3,10]);
+    return {rowCount:0,rows:[]};
+  });
+  const app=fakeApp();await registerFleetRoutes(app,pool);
+  const {res}=await invoke(app.route('get','/api/fleet/trucks/:id/positions'));
+  assert.equal(res.statusCode,200);
+  assert.deepEqual(res.payload,[]);
+  assert.equal(pool.calls.length,1);
+});
+
+test('GPS track devuelve el recorrido cronológico filtrado y scoped',async()=>{
+  const points=[
+    {id:20,truck_id:3,lat:-33.5,lng:-70.7,recorded_at:'2026-08-19T10:00:00.000Z'},
+    {id:21,truck_id:3,lat:-33.4,lng:-70.6,recorded_at:'2026-08-19T11:00:00.000Z'}
+  ];
+  const pool=transactionalPool(async(sql,values)=>{
+    assert.match(sql,/te\.truck_id=\$1 and t\.company_id=\$2/);
+    assert.match(sql,/order by te\.recorded_at asc,te\.id asc limit 10000$/);
+    assert.deepEqual(values,[3,10,'2026-08-19T09:00:00.000Z','2026-08-19T12:00:00.000Z']);
+    return {rowCount:points.length,rows:points};
+  });
+  const app=fakeApp();await registerFleetRoutes(app,pool);
+  const {res}=await invoke(app.route('get','/api/fleet/trucks/:id/track'),{query:{from:'2026-08-19T09:00:00Z',to:'2026-08-19T12:00:00Z'}});
+  assert.equal(res.statusCode,200);
+  assert.deepEqual(res.payload,{truck_id:3,points});
+});
+
+test('GPS posición individual no expone un camión fuera del company scope',async()=>{
+  const pool=transactionalPool(async(sql,values)=>{
+    assert.match(sql,/te\.truck_id=\$1 and t\.company_id=\$2/);
+    assert.deepEqual(values,[3,10]);
+    return {rowCount:0,rows:[]};
+  });
+  const app=fakeApp();await registerFleetRoutes(app,pool);
+  const {res}=await invoke(app.route('get','/api/fleet/trucks/:id/position'));
+  assert.equal(res.statusCode,404);
+  assert.equal(res.payload,undefined);
+  assert.equal(pool.calls.length,1);
+});
