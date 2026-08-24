@@ -28,8 +28,74 @@ const economicView=(trip,profile)=>{
     legacy_unverified:legacy
   };
 };
+const COST_BASES=new Set(['planned','observed','allocated']);
+const COST_SUPPORT=new Set(['documented','undocumented']);
+const COST_STATUSES=new Set(['draft']);
+const clean=v=>typeof v==='string'?v.trim():v;
+const validDate=v=>v===undefined||v===null||v===''||(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(String(v))&&(()=>{const d=new Date(`${v}T00:00:00.000Z`);return !Number.isNaN(d.getTime())&&d.toISOString().slice(0,10)===v})());
+function costInput(body={}){
+  const amount=body.amount_clp;
+  if(amount===undefined||amount===null||typeof amount==='boolean'||Array.isArray(amount)||typeof amount==='object'||!Number.isSafeInteger(Number(amount))||Number(amount)<0)return {error:'amount_clp debe ser un entero no negativo'};
+  const vat=body.amount_includes_vat;
+  if(vat!==undefined&&vat!==null&&typeof vat!=='boolean')return {error:'amount_includes_vat debe ser boolean o null'};
+  const basis=clean(body.cost_basis);
+  if(!COST_BASES.has(basis))return {error:'cost_basis no válido'};
+  const support=body.support_status===undefined||body.support_status===null?null:clean(body.support_status);
+  if(support!==null&&!COST_SUPPORT.has(support))return {error:'support_status no válido'};
+  const description=body.description===undefined||body.description===null?null:clean(body.description);
+  if(description!==null&&(!description||description.length>1000))return {error:'description no válida'};
+  const justification=body.justification===undefined||body.justification===null?null:clean(body.justification);
+  if(support==='undocumented'&&!justification)return {error:'justification es obligatoria para costos sin respaldo'};
+  const effectiveDate=body.effective_date===undefined||body.effective_date===null||body.effective_date===''?null:body.effective_date;
+  if(!validDate(effectiveDate))return {error:'effective_date no válida'};
+  return {amount:Number(amount),vat:vat??null,basis,support,justification:justification||null,description,effectiveDate,status:'draft'};
+}
+const costView=row=>({...row,amount_clp:Number(row.amount_clp)});
 
 function registerEconomicsRoutes(app,pool){
+  app.get('/api/economics/trips/:id/costs',requirePermission('economics.read'),async(req,res)=>{
+    const cid=scopedCompanyId(req);if(!cid)return res.status(400).json({error:'company_id es obligatorio para consultar este recurso'});
+    try{
+      const trip=await pool.query('select id from trips where id=$1 and company_id=$2',[req.params.id,cid]);
+      if(!trip.rowCount)return res.sendStatus(404);
+      const result=await pool.query(`select i.id,i.company_id,i.trip_id,i.status item_status,i.current_version_id,c.code category_code,c.name category_name,c.cost_group,
+        v.id version_id,v.version_number,v.cost_basis,v.amount_clp,v.amount_includes_vat,v.support_status,v.justification,v.description,v.effective_date,v.status
+        from trip_cost_items i join economic_cost_categories c on c.id=i.category_id
+        join trip_cost_versions v on v.id=i.current_version_id and v.trip_cost_item_id=i.id and v.company_id=i.company_id
+        where i.trip_id=$1 and i.company_id=$2 order by i.id desc`,[req.params.id,cid]);
+      res.json(result.rows.map(costView));
+    }catch{res.status(500).json({error:'No se pudieron consultar los costos del viaje'})}
+  });
+  app.post('/api/economics/trips/:id/costs',requirePermission('economics.manage'),async(req,res)=>{
+    const cid=scopedCompanyId(req);if(!cid)return res.status(400).json({error:'company_id es obligatorio para modificar este recurso'});
+    const input=costInput(req.body);if(input.error)return res.status(400).json({error:input.error});
+    let db=null,open=false;
+    try{
+      db=await pool.connect();await db.query('BEGIN');open=true;
+      const trip=(await db.query('select id,company_id from trips where id=$1 and company_id=$2 for update',[req.params.id,cid])).rows[0];
+      if(!trip){await db.query('ROLLBACK');open=false;return res.sendStatus(404)}
+      const category=(await db.query("select id,code,name,cost_group from economic_cost_categories where code=$1 and active=true for share",[clean(req.body.category_code)])).rows[0];
+      if(!category){await db.query('ROLLBACK');open=false;return res.status(400).json({error:'categoría inexistente o inactiva'})}
+      if(category.cost_group!=='direct'){await db.query('ROLLBACK');open=false;return res.status(400).json({error:'la categoría no es directa'})}
+      const item=(await db.query('insert into trip_cost_items(company_id,trip_id,category_id,status,created_by) values($1,$2,$3,\'active\',$4) returning *',[cid,trip.id,category.id,req.user.id])).rows[0];
+      const version=(await db.query(`insert into trip_cost_versions(company_id,trip_cost_item_id,version_number,cost_basis,amount_clp,amount_includes_vat,support_status,justification,description,effective_date,status,created_by)
+        values($1,$2,1,$3,$4,$5,$6,$7,$8,$9,'draft',$10) returning *`,[cid,item.id,input.basis,input.amount,input.vat,input.support,input.justification,input.description,input.effectiveDate,req.user.id])).rows[0];
+      const updated=(await db.query('update trip_cost_items set current_version_id=$1,updated_at=now() where id=$2 and company_id=$3 returning *',[version.id,item.id,cid])).rows[0];
+      await writeAudit(db,req,{companyId:cid,action:'create',entity:'trip_cost',entityId:item.id,beforeData:null,afterData:{item:updated,version,category}});
+      await db.query('COMMIT');open=false;res.status(201).json(costView({...version,item_id:item.id,category_code:category.code,category_name:category.name,item_status:updated.status,current_version_id:version.id}));
+    }catch{if(open){try{await db.query('ROLLBACK')}catch{}}res.status(500).json({error:'No se pudo crear el costo directo'})}finally{if(db)db.release()}
+  });
+  app.get('/api/economics/costs/:id',requirePermission('economics.read'),async(req,res)=>{
+    const cid=scopedCompanyId(req);if(!cid)return res.status(400).json({error:'company_id es obligatorio para consultar este recurso'});
+    try{const r=await pool.query(`select i.id,i.company_id,i.trip_id,i.status item_status,i.current_version_id,c.code category_code,c.name category_name,c.cost_group,
+      v.id version_id,v.version_number,v.cost_basis,v.amount_clp,v.amount_includes_vat,v.support_status,v.justification,v.description,v.effective_date,v.status
+      from trip_cost_items i join economic_cost_categories c on c.id=i.category_id join trip_cost_versions v on v.trip_cost_item_id=i.id and v.company_id=i.company_id
+      where i.id=$1 and i.company_id=$2 order by v.version_number desc`,[req.params.id,cid]);if(!r.rowCount)return res.sendStatus(404);res.json(r.rows.map(costView))}catch{res.status(500).json({error:'No se pudo consultar el costo'})}
+  });
+  app.post('/api/economics/costs/:id/versions',requirePermission('economics.manage'),async(req,res)=>{
+    const cid=scopedCompanyId(req);if(!cid)return res.status(400).json({error:'company_id es obligatorio para modificar este recurso'});const input=costInput(req.body);if(input.error)return res.status(400).json({error:input.error});let db=null,open=false;
+    try{db=await pool.connect();await db.query('BEGIN');open=true;const item=(await db.query(`select i.*,c.code category_code,c.name category_name,c.cost_group from trip_cost_items i join economic_cost_categories c on c.id=i.category_id where i.id=$1 and i.company_id=$2 for update`,[req.params.id,cid])).rows[0];if(!item){await db.query('ROLLBACK');open=false;return res.sendStatus(404)}if(item.cost_group!=='direct'){await db.query('ROLLBACK');open=false;return res.status(400).json({error:'la categoría no es directa'})}const last=(await db.query('select * from trip_cost_versions where trip_cost_item_id=$1 and company_id=$2 order by version_number desc limit 1 for update',[item.id,cid])).rows[0];const version=(await db.query(`insert into trip_cost_versions(company_id,trip_cost_item_id,version_number,cost_basis,amount_clp,amount_includes_vat,support_status,justification,description,effective_date,status,supersedes_version_id,created_by) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft',$11,$12) returning *`,[cid,item.id,Number(last.version_number)+1,input.basis,input.amount,input.vat,input.support,input.justification,input.description,input.effectiveDate,last.id,req.user.id])).rows[0];const updated=(await db.query('update trip_cost_items set current_version_id=$1,updated_at=now() where id=$2 and company_id=$3 returning *',[version.id,item.id,cid])).rows[0];await writeAudit(db,req,{companyId:cid,action:'version',entity:'trip_cost',entityId:item.id,beforeData:{item,version:last},afterData:{item:updated,version}});await db.query('COMMIT');open=false;res.status(201).json(costView({...version,item_id:item.id,category_code:item.category_code,category_name:item.category_name,item_status:updated.status,current_version_id:version.id}))}catch{if(open){try{await db.query('ROLLBACK')}catch{}}res.status(500).json({error:'No se pudo crear la nueva versión del costo'})}finally{if(db)db.release()}
+  });
   app.get('/api/economics/trips/:id',requirePermission('economics.read'),async(req,res)=>{
     const cid=scopedCompanyId(req);
     if(!cid)return res.status(400).json({error:'company_id es obligatorio para consultar este recurso'});

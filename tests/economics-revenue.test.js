@@ -2,7 +2,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const {registerEconomicsRoutes}=require('../economics-api');
 
-function fakeApp(){const routes=[];for(const method of ['get','patch'])routes[method]=(path,...handlers)=>routes.push({method,path,handlers});routes.route=(method,path)=>{const route=routes.find(x=>x.method===method&&x.path===path);assert.ok(route,`Ruta no registrada: ${method} ${path}`);return route};return routes}
+function fakeApp(){const routes=[];for(const method of ['get','post','patch'])routes[method]=(path,...handlers)=>routes.push({method,path,handlers});routes.route=(method,path)=>{const route=routes.find(x=>x.method===method&&x.path===path);assert.ok(route,`Ruta no registrada: ${method} ${path}`);return route};return routes}
 function response(){return {statusCode:200,payload:undefined,status(code){this.statusCode=code;return this},json(value){this.payload=value;return this},sendStatus(code){this.statusCode=code;return this}}}
 async function invoke(route,overrides={}){const req={user:{id:7,role_code:'operations',company_id:10,permissions:['economics.read','economics.manage']},params:{id:'31'},query:{},body:{},ip:'127.0.0.1',...overrides};const res=response();let index=0;const next=async()=>{const handler=route.handlers[index++];if(handler)return handler(req,res,next)};await next();return res}
 function mockPool(resolver){const calls=[];let releases=0;const client={async query(sql,values=[]){calls.push({source:'client',sql,values});return resolver(sql,values,calls)},release(){releases++}};return {calls,get releases(){return releases},async connect(){return client},async query(sql,values=[]){calls.push({source:'pool',sql,values});return resolver(sql,values,calls)}}}
@@ -120,5 +120,5 @@ test('el frontend reutiliza el viaje cargado, no repite su GET y muestra errores
  const panelLoader=source.slice(source.indexOf('async function attachEconomicPanel'),source.indexOf('const openTripWithoutEconomics'));
  assert.match(panelLoader,/catch\(err\)/);
  assert.match(panelLoader,/No se pudo cargar: \$\{esc\(err\.message\)\}/);
- assert.match(source,/economics\.manage/);assert.doesNotMatch(source,/economicCostForm|TAG económico|conciliación económica/);
+ assert.match(source,/economics\.manage/);assert.match(source,/economicCostForm/);assert.doesNotMatch(source,/TAG económico|conciliación económica/);
 });
