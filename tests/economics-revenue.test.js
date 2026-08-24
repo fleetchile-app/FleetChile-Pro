@@ -13,6 +13,8 @@ const profile={trip_id:31,company_id:10,revenue_defined:true,revenue_includes_va
 function successfulMutationPool({existingProfile=null,failAt=null,started=false}={}){
  return mockPool(async(sql,values)=>{
   if(sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK')return {rows:[],rowCount:0};
+  if(sql.startsWith("select id from economic_authorization_requests"))return {rows:[],rowCount:0};
+  if(sql.startsWith('insert into economic_authorization_requests'))return {rows:[{id:90,company_id:10,trip_id:31,request_type:'revenue_change',requested_by:7,previous_revenue_clp:'150000',requested_revenue_clp:200000,status:'pending'}],rowCount:1};
   if(sql.startsWith('select id,company_id,revenue_clp,actual_departure,status from trips'))return {rows:[{...trip,actual_departure:started?'2026-08-19T12:00:00Z':null}],rowCount:1};
   if(sql.startsWith('select * from trip_economic_profiles'))return {rows:existingProfile?[existingProfile]:[],rowCount:existingProfile?1:0};
   if(sql.startsWith('insert into trip_economic_profiles')){if(failAt==='profile')throw Error('profile');return {rows:[profile],rowCount:1}}
@@ -76,8 +78,8 @@ test('rechaza ingresos negativos, fraccionarios y tipos coercibles no admitidos 
  const vat=await invoke(route,{body:{revenue_clp:1,revenue_includes_vat:'true'}});assert.equal(vat.statusCode,400);
 });
 
-test('viaje iniciado requiere autorización y no realiza ninguna escritura',async()=>{
- const pool=successfulMutationPool({started:true});const app=await economicsApp(pool);const res=await invoke(app.route('patch','/api/economics/trips/:id/revenue'),{body:{revenue_clp:200000}});assert.equal(res.statusCode,409);assert.equal(res.payload.code,'ECONOMIC_AUTHORIZATION_REQUIRED');assert.deepEqual(pool.calls.map(x=>x.sql),['BEGIN','select id,company_id,revenue_clp,actual_departure,status from trips where id=$1 and company_id=$2 for update','ROLLBACK']);assert.equal(pool.releases,1);
+test('viaje iniciado crea autorización y no modifica el ingreso',async()=>{
+ const pool=successfulMutationPool({started:true});const app=await economicsApp(pool);const res=await invoke(app.route('patch','/api/economics/trips/:id/revenue'),{body:{revenue_clp:200000,reason:'Cambio acordado'}});assert.equal(res.statusCode,202);assert.equal(res.payload.code,'ECONOMIC_AUTHORIZATION_CREATED');assert.equal(pool.calls.some(x=>x.sql.startsWith('update trips set revenue_clp')),false);assert.equal(pool.releases,1);
 });
 
 test('viaje inexistente o fuera de scope responde 404 sin mutar',async()=>{

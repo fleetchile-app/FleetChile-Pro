@@ -1,7 +1,7 @@
 const fs=require('fs');
 const path=require('path');
 
-const MIGRATION_FILES=['003_auth_rbac.sql','004_operations.sql','005_trip_links.sql','006_admin_settings.sql','007_preflight_integrity.sql','008_fleet_phase3_gps.sql','009_operational_geography.sql','010_road_routing.sql','011_trip_route_snapshots.sql','012_fuel_operations.sql','013_maintenance_operations.sql','014_operational_alerts.sql','015_economic_foundation.sql','016_economic_authorizations.sql'];
+const MIGRATION_FILES=['003_auth_rbac.sql','004_operations.sql','005_trip_links.sql','006_admin_settings.sql','007_preflight_integrity.sql','008_fleet_phase3_gps.sql','009_operational_geography.sql','010_road_routing.sql','011_trip_route_snapshots.sql','012_fuel_operations.sql','013_maintenance_operations.sql','014_operational_alerts.sql','015_economic_foundation.sql','016_economic_authorizations.sql','017_revenue_authorization_values.sql'];
 
 function timeoutMs(value,fallback){
   const parsed=Number(value);
