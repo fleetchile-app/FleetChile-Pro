@@ -174,6 +174,11 @@ function registerAuthRoutes(app,pool){
     } finally {client.release();}
   });
 }
+async function reauthenticateUser(pool,userId,password){
+  if(!userId||typeof password!=='string'||!password)return false;
+  const r=await pool.query('select password_hash from users where id=$1 and active=true',[userId]);
+  return !!r.rowCount&&await verifyPassword(password,r.rows[0].password_hash);
+}
 
 async function authMiddleware(pool,req,res,next){
   const user=await authenticateToken(pool,req).catch(()=>null);
@@ -183,4 +188,4 @@ async function authMiddleware(pool,req,res,next){
 
 function requirePermission(code){return (req,res,next)=>{if(!req.user)return res.status(401).json({error:'Autenticación requerida'});if(req.user.role_code==='admin'||(req.user.permissions||[]).includes(code))return next();res.status(403).json({error:`Permiso requerido: ${code}`});};}
 
-module.exports={registerAuthRoutes,authMiddleware,requirePermission};
+module.exports={registerAuthRoutes,authMiddleware,requirePermission,reauthenticateUser};

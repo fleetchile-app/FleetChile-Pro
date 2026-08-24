@@ -1,4 +1,5 @@
 const {requirePermission}=require('./auth');
+const {reauthenticateUser}=require('./auth');
 const {writeAudit}=require('./audit');
 
 const isAdmin=req=>req.user?.role_code==='admin';
@@ -53,6 +54,28 @@ function costInput(body={}){
 const costView=row=>({...row,amount_clp:Number(row.amount_clp)});
 
 function registerEconomicsRoutes(app,pool){
+  app.get('/api/economics/authorizations',requirePermission('economics.read'),async(req,res)=>{
+    const cid=scopedCompanyId(req);if(!cid)return res.status(400).json({error:'company_id es obligatorio para consultar este recurso'});
+    try{const r=await pool.query(`select a.*,u.name requested_by_name,r.name resolved_by_name from economic_authorization_requests a
+      left join users u on u.id=a.requested_by left join users r on r.id=a.resolved_by
+      where a.company_id=$1 order by a.requested_at desc,a.id desc`,[cid]);res.json(r.rows)}catch{res.status(500).json({error:'No se pudieron consultar las autorizaciones'})}
+  });
+  app.get('/api/economics/authorizations/:id',requirePermission('economics.read'),async(req,res)=>{
+    const cid=scopedCompanyId(req);if(!cid)return res.status(400).json({error:'company_id es obligatorio para consultar este recurso'});
+    try{const r=await pool.query(`select a.*,u.name requested_by_name,r.name resolved_by_name from economic_authorization_requests a
+      left join users u on u.id=a.requested_by left join users r on r.id=a.resolved_by where a.id=$1 and a.company_id=$2`,[req.params.id,cid]);if(!r.rowCount)return res.sendStatus(404);res.json(r.rows[0])}catch{res.status(500).json({error:'No se pudo consultar la autorización'})}
+  });
+  app.post('/api/economics/authorizations',requirePermission('economics.manage'),async(req,res)=>{
+    const cid=scopedCompanyId(req);if(!cid)return res.status(400).json({error:'company_id es obligatorio para modificar este recurso'});
+    const type=clean(req.body?.request_type),reason=clean(req.body?.reason);if(!['revenue_change','cost_version'].includes(type))return res.status(400).json({error:'request_type no válido'});if(!reason)return res.status(400).json({error:'El motivo es obligatorio'});
+    const revenue=req.body?.requested_revenue_clp;if(type==='revenue_change'&&(revenue===undefined||!Number.isSafeInteger(Number(revenue))||Number(revenue)<0))return res.status(400).json({error:'requested_revenue_clp no válido'});
+    const versionId=req.body?.cost_version_id;let db=null,open=false;
+    try{db=await pool.connect();await db.query('BEGIN');open=true;const trip=(await db.query('select id,company_id from trips where id=$1 and company_id=$2 for update',[req.body?.trip_id,cid])).rows[0];if(!trip){await db.query('ROLLBACK');open=false;return res.sendStatus(404)}let version=null;if(type==='cost_version'){version=(await db.query(`select v.*,i.trip_id from trip_cost_versions v join trip_cost_items i on i.id=v.trip_cost_item_id and i.company_id=v.company_id where v.id=$1 and v.company_id=$2 and i.trip_id=$3 for update`,[versionId,cid,trip.id])).rows[0];if(!version){await db.query('ROLLBACK');open=false;return res.sendStatus(404)}if(!['draft'].includes(version.status)){await db.query('ROLLBACK');open=false;return res.status(409).json({error:'La versión ya no puede solicitar autorización'})}}
+      const created=(await db.query(`insert into economic_authorization_requests(company_id,trip_id,request_type,requested_by,reason,cost_version_id,requested_revenue_clp) values($1,$2,$3,$4,$5,$6,$7) returning *`,[cid,trip.id,type,req.user.id,reason,type==='cost_version'?version.id:null,type==='revenue_change'?Number(revenue):null])).rows[0];if(version)await db.query('update trip_cost_versions set status=\'pending_approval\',authorization_request_id=$1 where id=$2 and company_id=$3',[created.id,version.id,cid]);await writeAudit(db,req,{companyId:cid,action:'create',entity:'economic_authorization',entityId:created.id,afterData:created});await db.query('COMMIT');open=false;res.status(201).json(created)}catch(e){if(open){try{await db.query('ROLLBACK')}catch{}}res.status(e.code==='23505'?409:500).json({error:'No se pudo crear la autorización'})}finally{if(db)db.release()}
+  });
+  async function resolveAuthorization(req,res,decision){const cid=scopedCompanyId(req);if(!cid)return res.status(400).json({error:'company_id es obligatorio para modificar este recurso'});const reason=clean(req.body?.reason);if(!reason)return res.status(400).json({error:'El motivo de resolución es obligatorio'});if(!await reauthenticateUser(pool,req.user.id,req.body?.password))return res.status(401).json({error:'Reautenticación inválida'});let db=null,open=false;try{db=await pool.connect();await db.query('BEGIN');open=true;const a=(await db.query('select * from economic_authorization_requests where id=$1 and company_id=$2 for update',[req.params.id,cid])).rows[0];if(!a){await db.query('ROLLBACK');open=false;return res.sendStatus(404)}if(a.status!=='pending'){await db.query('ROLLBACK');open=false;return res.status(409).json({error:'La solicitud ya fue resuelta'})}if(a.requested_by===req.user.id){await db.query('ROLLBACK');open=false;return res.status(403).json({error:'El solicitante no puede autorizar su propia solicitud'})}if(a.cost_version_id){const v=(await db.query('select id,status,authorization_request_id from trip_cost_versions where id=$1 and company_id=$2 for update',[a.cost_version_id,cid])).rows[0];if(!v||v.authorization_request_id!==a.id||v.status!=='pending_approval'){await db.query('ROLLBACK');open=false;return res.status(409).json({error:'La versión económica fue reemplazada o ya no es autorizable'})}}const updated=(await db.query('update economic_authorization_requests set status=$1,resolved_by=$2,resolved_at=now(),resolution_reason=$3,reauthenticated_at=now() where id=$4 and company_id=$5 and status=\'pending\' returning *',[decision,req.user.id,reason,a.id,cid])).rows[0];if(a.cost_version_id)await db.query('update trip_cost_versions set status=$1 where id=$2 and company_id=$3 and authorization_request_id=$4',[decision==='approved'?'approved':'rejected',a.cost_version_id,cid,a.id]);await writeAudit(db,req,{companyId:cid,action:decision,entity:'economic_authorization',entityId:a.id,beforeData:a,afterData:updated});await db.query('COMMIT');open=false;res.json(updated)}catch{if(open){try{await db.query('ROLLBACK')}catch{}}res.status(500).json({error:'No se pudo resolver la autorización'})}finally{if(db)db.release()}}
+  app.post('/api/economics/authorizations/:id/approve',requirePermission('economics.approve'),(req,res)=>resolveAuthorization(req,res,'approved'));
+  app.post('/api/economics/authorizations/:id/reject',requirePermission('economics.approve'),(req,res)=>resolveAuthorization(req,res,'rejected'));
   app.get('/api/economics/trips/:id/costs',requirePermission('economics.read'),async(req,res)=>{
     const cid=scopedCompanyId(req);if(!cid)return res.status(400).json({error:'company_id es obligatorio para consultar este recurso'});
     try{
