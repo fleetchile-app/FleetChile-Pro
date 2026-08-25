@@ -24,7 +24,7 @@ const token = () => crypto.randomBytes(32).toString('hex');
 const tokenHash = value => crypto.createHash('sha256').update(value).digest('hex');
 
 async function userView(pool,userId){
-  const r = await pool.query(`select u.id,u.name,u.email,u.phone,u.company_id,u.role_id,r.code role_code,r.name role_name,c.legal_name company_name,
+  const r = await pool.query(`select u.id,u.name,u.email,u.phone,u.company_id,u.driver_id,u.role_id,r.code role_code,r.name role_name,c.legal_name company_name,
     coalesce((select json_agg(p.code order by p.code) from role_permissions rp join permissions p on p.id=rp.permission_id where rp.role_id=u.role_id),'[]'::json) permissions
     from users u left join roles r on r.id=u.role_id left join companies c on c.id=u.company_id where u.id=$1 and u.active=true`,[userId]);
   return r.rows[0] || null;

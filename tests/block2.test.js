@@ -50,7 +50,7 @@ async function statusRoute(endpoint,pool){
 }
 
 function legacyLoadHandler(){
-  const source=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
+  const source=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8').replace(/\r\n/g,'\n');
   const start=source.indexOf('async function legacyTruckBelongs');
   const handlerStart=source.indexOf('async function createLegacyLoad',start);
   const end=source.indexOf('\n}\n',handlerStart)+2;
