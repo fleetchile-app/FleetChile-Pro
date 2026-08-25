@@ -170,6 +170,36 @@ function registerEconomicsRoutes(app,pool){
     }
   });
 
+  app.get('/api/economics/trips/:id/delta',requirePermission('economics.read'),async(req,res)=>{
+    const cid=scopedCompanyId(req);if(!cid)return res.status(400).json({error:'company_id es obligatorio para consultar este recurso'});
+    try{
+      const result=await pool.query(`select t.id trip_id,t.company_id,t.revenue_clp,ep.revenue_defined,ep.revenue_includes_vat,
+        s.distance_meters/1000.0 snapshot_distance_km,t.distance_km trip_distance_km,r.distance_km route_distance_km,
+        i.id cost_item_id,i.status item_status,i.current_version_id,c.code category_code,c.name category_name,c.cost_group,
+        v.id version_id,v.version_number,v.amount_clp,v.cost_basis,v.status version_status
+        from trips t left join trip_economic_profiles ep on ep.trip_id=t.id and ep.company_id=t.company_id
+        left join trip_route_snapshots s on s.id=t.planned_route_snapshot_id and s.trip_id=t.id and s.company_id=t.company_id
+        left join routes r on r.id=t.route_id and r.company_id=t.company_id
+        left join trip_cost_items i on i.trip_id=t.id and i.company_id=t.company_id
+        left join economic_cost_categories c on c.id=i.category_id
+        left join trip_cost_versions v on v.id=i.current_version_id and v.trip_cost_item_id=i.id and v.company_id=i.company_id
+        where t.id=$1 and t.company_id=$2`,[req.params.id,cid]);
+      if(!result.rowCount)return res.sendStatus(404);
+      const first=result.rows[0],defined=first.revenue_defined===true;
+      const rows=result.rows.filter(row=>row.cost_item_id!==null);
+      const recognized=rows.filter(row=>row.item_status!=='voided'&&row.cost_group==='direct'&&['approved','reconciled'].includes(row.version_status)&&row.cost_basis!=='indirect');
+      const costs=recognized.map(row=>({cost_item_id:row.cost_item_id,category_code:row.category_code,category_name:row.category_name,version_id:row.version_id,version_number:row.version_number,amount:Number(row.amount_clp),cost_basis:row.cost_basis,status:row.version_status}));
+      const excluded_costs=rows.filter(row=>!recognized.includes(row)).map(row=>({cost_item_id:row.cost_item_id,version_id:row.version_id,category_code:row.category_code,amount:row.amount_clp===null?null:Number(row.amount_clp),cost_basis:row.cost_basis??null,status:row.version_status??row.item_status,reason:row.item_status==='voided'?'voided':row.cost_group!=='direct'?'indirect':!row.version_id?'no_current_version':row.cost_basis==='indirect'?'indirect':`status_${row.version_status}`}));
+      const total=costs.reduce((sum,cost)=>sum+cost.amount,0),delta=defined&&costs.length>0?Number(first.revenue_clp)-total:null;
+      const pending=rows.some(row=>row.item_status!=='voided'&&row.cost_group==='direct'&&['draft','pending_approval'].includes(row.version_status));
+      const delta_status=!defined||costs.length===0?'missing_data':pending||costs.some(cost=>cost.status==='approved')?'provisional':'reconciled';
+      const snapshot=Number(first.snapshot_distance_km),tripDistance=Number(first.trip_distance_km),routeDistance=Number(first.route_distance_km);
+      const distance=Number.isFinite(snapshot)&&snapshot>0?snapshot:Number.isFinite(tripDistance)&&tripDistance>0?tripDistance:Number.isFinite(routeDistance)&&routeDistance>0?routeDistance:null;
+      const distance_source=distance===null?null:Number.isFinite(snapshot)&&snapshot>0?'trip_route_snapshot':Number.isFinite(tripDistance)&&tripDistance>0?'trips.distance_km':'routes.distance_km';
+      res.json({trip_id:first.trip_id,company_id:first.company_id,revenue:{amount:first.revenue_clp===null?null:Number(first.revenue_clp),defined,includes_vat:first.revenue_includes_vat??null},costs,total_recognized_costs:costs.length?total:null,delta,delta_status,distance_km:distance,distance_source,distance_kind:distance===null?null:'official_planned',delta_per_km:delta!==null&&distance!==null?delta/distance:null,excluded_costs});
+    }catch{res.status(500).json({error:'No se pudo calcular el Delta Operacional'})}
+  });
+
   app.get('/api/economics/trips/:id/revenue-history',requirePermission('economics.read'),async(req,res)=>{
     const cid=scopedCompanyId(req);
     if(!cid)return res.status(400).json({error:'company_id es obligatorio para consultar este recurso'});
