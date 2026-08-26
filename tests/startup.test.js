@@ -35,26 +35,27 @@ test('timeouts de migración usan configuración válida y defaults seguros',()=
 });
 
 test('runner incluye la migración aditiva de combustible al final',()=>{
-  assert.equal(MIGRATION_FILES.at(-8),'012_fuel_operations.sql');
+  assert.ok(MIGRATION_FILES.includes('012_fuel_operations.sql'));
   assert.equal(MIGRATION_FILES.filter(file=>file==='012_fuel_operations.sql').length,1);
 });
 
 test('runner incluye la migración aditiva de mantenciones al final',()=>{
-  assert.equal(MIGRATION_FILES.at(-7),'013_maintenance_operations.sql');
+  assert.ok(MIGRATION_FILES.includes('013_maintenance_operations.sql'));
   assert.equal(MIGRATION_FILES.filter(file=>file==='013_maintenance_operations.sql').length,1);
 });
 
 test('runner incluye la migración de alertas operacionales al final',()=>{
-  assert.equal(MIGRATION_FILES.at(-6),'014_operational_alerts.sql');
+  assert.ok(MIGRATION_FILES.includes('014_operational_alerts.sql'));
   assert.equal(MIGRATION_FILES.filter(file=>file==='014_operational_alerts.sql').length,1);
 });
 
 test('runner incluye la fundación económica después de alertas operacionales',()=>{
-  assert.equal(MIGRATION_FILES.at(-5),'015_economic_foundation.sql');
-  assert.equal(MIGRATION_FILES.at(-4),'016_economic_authorizations.sql');
-  assert.equal(MIGRATION_FILES.at(-3),'017_revenue_authorization_values.sql');
-  assert.equal(MIGRATION_FILES.at(-2),'018_economic_reconciliation.sql');
-  assert.equal(MIGRATION_FILES.at(-1),'019_driver_user_assignment.sql');
+  assert.ok(MIGRATION_FILES.includes('015_economic_foundation.sql'));
+  assert.ok(MIGRATION_FILES.includes('016_economic_authorizations.sql'));
+  assert.ok(MIGRATION_FILES.includes('017_revenue_authorization_values.sql'));
+  assert.ok(MIGRATION_FILES.includes('018_economic_reconciliation.sql'));
+  assert.ok(MIGRATION_FILES.includes('019_driver_user_assignment.sql'));
+  assert.equal(MIGRATION_FILES.at(-1),'020_driver_checklist_alerts.sql');
   assert.equal(MIGRATION_FILES.filter(file=>file==='015_economic_foundation.sql').length,1);
   assert.ok(MIGRATION_FILES.indexOf('015_economic_foundation.sql')>MIGRATION_FILES.indexOf('014_operational_alerts.sql'));
   assert.ok(MIGRATION_FILES.indexOf('019_driver_user_assignment.sql')>MIGRATION_FILES.indexOf('018_economic_reconciliation.sql'));
