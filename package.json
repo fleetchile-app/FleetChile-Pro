@@ -8,8 +8,10 @@
     "check:syntax": "node scripts/check-syntax.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1118.0",
     "express": "^5.1.0",
-    "pg": "^8.16.3"
+    "pg": "^8.16.3",
+    "sharp": "^0.35.3"
   },
   "engines": {
     "node": ">=20"
