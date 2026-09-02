@@ -53,6 +53,11 @@ test('un admin legacy no conserva el bypass cuando ya tiene membership scoped',(
   assert.equal(next,false);
 });
 
+test('platform_superadmin conserva permisos heredados al proyectar su identidad platform',()=>{
+  const platform=resolveEffectiveMembership({legacy_permissions:['clients.manage'],platform_memberships:[{id:7,role_code:'platform_superadmin',permissions:[]}],company_id:99});
+  assert.equal(platform.actor_type,'platform');assert.equal(platform.company_id,null);assert.deepEqual(platform.permissions,['clients.manage']);
+});
+
 test('la migración declara memberships y scopes formales sin backfill de plataforma',()=>{
   const sql=fs.readFileSync('migrations/022_platform_company_identity.sql','utf8');
   assert.match(sql,/CREATE TABLE IF NOT EXISTS user_memberships/);

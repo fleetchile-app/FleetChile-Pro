@@ -25,7 +25,7 @@ const tokenHash = value => crypto.createHash('sha256').update(value).digest('hex
 
 function resolveEffectiveMembership(user){
   const platforms=(user.platform_memberships||[]).filter(x=>x.active!==false);
-  if(platforms.length){const p=platforms[0];return {actor_type:'platform',scope:'platform',company_id:null,membership_id:null,platform_membership_id:p.id||null,role:p.role_code||p.code||null,permissions:p.permissions||[],reason:null};}
+  if(platforms.length){const p=platforms[0];return {actor_type:'platform',scope:'platform',company_id:null,membership_id:null,platform_membership_id:p.id||null,role:p.role_code||p.code||null,permissions:[...new Set([...(p.permissions||[]),...(user.legacy_permissions||[])])],reason:null};}
   const memberships=(user.memberships||[]).filter(x=>x.active!==false);
   if(memberships.length!==1)return memberships.length>1?{actor_type:'unresolved',scope:null,company_id:null,membership_id:null,platform_membership_id:null,role:null,permissions:[],reason:'company_context_required'}:{actor_type:'legacy',scope:user.company_id?'company':null,company_id:user.company_id||null,membership_id:null,platform_membership_id:null,role:user.role_code||null,permissions:user.legacy_permissions||user.permissions||[],reason:'no_active_membership'};
   const m=memberships[0];return {actor_type:'company',scope:'company',company_id:m.company_id,membership_id:m.id||null,platform_membership_id:null,role:m.role_code||m.code||null,permissions:m.permissions||[],reason:null};
