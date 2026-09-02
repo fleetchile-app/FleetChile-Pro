@@ -649,7 +649,7 @@ test('loads legacy: validación de camión se conserva antes de abrir la transac
 test('loads legacy: conserva middleware de empresa y contexto transversal admin',async()=>{
   const source=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
   assert.match(source,/app\.post\("\/api\/loads",requirePermission\("loads\.manage"\),requireCreationCompany,/);
-  assert.match(source,/const companyId=req=>isAdmin\(req\)\?\(req\.body\?\.company_id\|\|null\):\(req\.user\?\.company_id\|\|null\)/);
+  assert.match(source,/const companyId=req=>\{const actor=resolveActorContext\(req\);if\(actor\?\.actor_type==='company'\)return actor\.company_id\|\|null;/);
   const created={id:31,company_id:20,cargo:'Carga'};
   const pool=transactionalPool(async(sql)=>{
     if(['BEGIN','COMMIT'].includes(sql))return {rowCount:0,rows:[]};

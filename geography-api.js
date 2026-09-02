@@ -1,10 +1,19 @@
-const {requirePermission}=require('./auth');
+const {requirePermission,resolveActorContext}=require('./auth');
 const {writeAudit}=require('./audit');
 const {GeocodingError}=require('./geocoding');
 
 const clean=value=>typeof value==='string'?value.trim():'';
-const isAdmin=req=>req.user?.role_code==='admin';
-const companyId=req=>isAdmin(req)?(req.body?.company_id||null):(req.user?.company_id||null);
+const actorContext=req=>resolveActorContext(req);
+const isLegacyAdmin=req=>{
+  const actor=actorContext(req);
+  return actor?.actor_type==='legacy'&&actor.role==='admin'&&!actor.membership_id&&!actor.platform_membership_id;
+};
+const companyId=req=>{
+  const actor=actorContext(req);
+  if(actor?.actor_type==='company')return actor.company_id||null;
+  if(actor?.actor_type==='legacy')return isLegacyAdmin(req)?(req.body?.company_id||actor.company_id||null):(actor.company_id||null);
+  return null;
+};
 const validCoordinates=result=>Number.isFinite(result?.lat)&&result.lat>=-90&&result.lat<=90&&Number.isFinite(result?.lng)&&result.lng>=-180&&result.lng<=180;
 
 function geocodingFailure(res,error){

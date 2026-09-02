@@ -1,9 +1,10 @@
-const {requirePermission}=require('./auth');
+const {requirePermission,resolveActorContext}=require('./auth');
 const {writeAudit}=require('./audit');
 const body=req=>req.body&&typeof req.body==='object'?req.body:{};
 const clean=v=>typeof v==='string'?v.trim():v;
-const isAdmin=req=>req.user?.role_code==='admin';
-const userCompany=req=>req.user?.company_id||null;
+const actorContext=req=>resolveActorContext(req);
+const isAdmin=req=>{const actor=actorContext(req);return actor?.actor_type==='legacy'&&actor.role==='admin'&&!actor.membership_id&&!actor.platform_membership_id;};
+const userCompany=req=>{const actor=actorContext(req);if(!actor)return null;if(actor.actor_type==='company')return actor.company_id||null;if(actor.actor_type==='legacy')return actor.company_id||null;return null;};
 const parseDate=v=>{if(!v)return null;const d=new Date(v);return Number.isNaN(d.getTime())?null:d.toISOString()};
 const parseNumber=v=>{if(v===null||v===undefined||v==='')return null;const n=Number(v);return Number.isFinite(n)?n:null};
 const parseFuelNumber=v=>{if(typeof v!=='number'&&typeof v!=='string')return null;if(typeof v==='string'&&!v.trim())return null;const n=Number(v);return Number.isFinite(n)?n:null};

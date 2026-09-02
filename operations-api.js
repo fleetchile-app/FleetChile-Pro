@@ -1,10 +1,11 @@
-const {requirePermission}=require('./auth');
+const {requirePermission,resolveActorContext}=require('./auth');
 const {writeAudit}=require('./audit');
 const body=req=>req.body&&typeof req.body==='object'?req.body:{};
 const clean=v=>typeof v==='string'?v.trim():v;
 const STATUSES=['Planificado','Asignado','En carga','En tránsito','Detenido','Llegó a destino','Descargando','Completado','Cancelado'];
-const isAdmin=req=>req.user?.role_code==='admin';
-const companyId=req=>req.user?.company_id||null;
+const actorContext=req=>resolveActorContext(req);
+const isAdmin=req=>{const actor=actorContext(req);return actor?.actor_type==='legacy'&&actor.role==='admin'&&!actor.membership_id&&!actor.platform_membership_id;};
+const companyId=req=>{const actor=actorContext(req);if(!actor)return null;if(actor.actor_type==='company')return actor.company_id||null;if(actor.actor_type==='legacy')return actor.company_id||null;return null;};
 const tripScope=(req,alias='t',parameter=1)=>isAdmin(req)?{sql:'true',values:[]}:{sql:`${alias}.company_id=$${parameter}`,values:[companyId(req)]};
 async function resourceBelongs(pool,table,id,cid){if(!id||!cid)return !id;const allowed={trucks:'company_id',drivers:'company_id',clients:'company_id',routes:'company_id'};const col=allowed[table];if(!col)return false;const r=await pool.query(`select id from ${table} where id=$1 and ${col}=$2`,[id,cid]);return !!r.rowCount;}
 const driverAccess=(req,res)=>{if(!req.user||req.user.role_code!=='driver'||!req.user.company_id||!req.user.driver_id){res.status(403).json({error:'Acceso exclusivo para conductores asociados'});return false}return true};

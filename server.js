@@ -10,7 +10,7 @@ const {registerRoutingRoutes}=require("./routing-api");
 const {createRoutingAdapter}=require("./routing");
 const {registerHealthRoutes}=require("./health-api");
 const {initializeDatabase,startApplication,logStartupError}=require("./startup");
-const {registerAuthRoutes,authMiddleware,requirePermission}=require("./auth");
+const {registerAuthRoutes,authMiddleware,requirePermission,resolveActorContext}=require("./auth");
 const {writeAudit}=require("./audit");
 const {registerAdminRoutes}=require("./admin-api");
 const {registerEconomicsRoutes}=require("./economics-api");
@@ -23,10 +23,12 @@ const tables=["trucks","drivers","routes","loads","maintenance","fuel","alerts"]
 const safeTable=name=>tables.includes(name);
 const readPermissions={trucks:"dashboard.read",drivers:"drivers.manage",routes:"dashboard.read",loads:"loads.manage",maintenance:"maintenance.manage",fuel:"fuel.manage",alerts:"dashboard.read"};
 const writePermissions={trucks:"fleet.manage",drivers:"drivers.manage",routes:"trips.manage",loads:"loads.manage",maintenance:"maintenance.manage",fuel:"fuel.manage",alerts:"fleet.manage"};
-const requireTablePermission=permissions=>(req,res,next)=>{const code=permissions[req.params.table];if(!code)return res.sendStatus(404);return requirePermission(code)(req,res,next)};
-const isAdmin=req=>req.user?.role_code==='admin';
-const companyId=req=>isAdmin(req)?(req.body?.company_id||null):(req.user?.company_id||null);
-const requireCreationCompany=(req,res,next)=>{const cid=companyId(req);if(!cid)return res.status(400).json({error:'company_id es obligatorio para crear este recurso'});req.resourceCompanyId=cid;next()};
+const requireTablePermission=permissions=>(req,res,next)=>{const code=permissions[req.params.table];if(!code)return res.sendStatus(404);const actor=resolveActorContext(req);if(actor?.actor_type==='platform'||actor?.actor_type==='unresolved')return res.status(403).json({error:'El CRUD genérico requiere contexto empresarial'});return requirePermission(code)(req,res,next)};
+// LEGACY ONLY: unmigrated admin sessions retain old cross-company CRUD compatibility.
+const isLegacyAdmin=req=>req.user?.role_code==='admin'&&!req.user?.membership_id&&!req.user?.platform_membership_id;
+const isAdmin=isLegacyAdmin;
+const companyId=req=>{const actor=resolveActorContext(req);if(actor?.actor_type==='company')return actor.company_id||null;if(actor?.actor_type==='legacy')return isAdmin(req)?(req.body?.company_id||actor.company_id||null):(actor.company_id||null);return null};
+const requireCreationCompany=(req,res,next)=>{const actor=resolveActorContext(req),cid=companyId(req);if(actor?.actor_type==='platform'||actor?.actor_type==='unresolved')return res.status(403).json({error:'Se requiere contexto empresarial'});if(!cid)return res.status(400).json({error:'company_id es obligatorio para crear este recurso'});req.resourceCompanyId=cid;next()};
 async function legacyTruckBelongs(pool,truck,cid){if(!truck)return true;const value=String(truck).trim();const q=/^\d+$/.test(value)?'select id from trucks where id=$1 and company_id=$2':'select id from trucks where patente=$1 and company_id=$2';const r=await pool.query(q,[value,cid]);return !!r.rowCount}
 async function createLegacyLoad(req,res,pool){
  const{client,guide,cargo,weight_kg=0,volume_m3=0,value_clp=0,truck,origin,destination,status="Planificada"}=req.body;
@@ -72,12 +74,12 @@ registerRoutingRoutes(app,pool,createRoutingAdapter());
 registerAdminRoutes(app,pool);
 registerEconomicsRoutes(app,pool);
 
-app.get("/api/dashboard",requirePermission("dashboard.read"),async(req,res)=>{try{const scoped=isAdmin(req)?{clause:'',values:[]}:{clause:' where company_id=$1',values:[companyId(req)]};const q=async sql=>Number((await pool.query(sql,scoped.values)).rows[0].n||0);res.json({trucks:await q(`select count(*) n from trucks${scoped.clause}`),enroute:await q(`select count(*) n from trucks${scoped.clause}${scoped.clause?' and':' where'} status='En ruta'`),loads:await q(`select count(*) n from loads${scoped.clause}`),alerts:await q(`select count(*) n from alerts${scoped.clause}${scoped.clause?' and':' where'} resolved=false`),fuel:await q(`select coalesce(sum(total_clp),0) n from fuel${scoped.clause}`),km:await q(`select coalesce(sum(km),0) n from trucks${scoped.clause}`)})}catch(e){res.status(500).json({error:"No se pudo cargar el dashboard"})}});
+app.get("/api/dashboard",requirePermission("dashboard.read"),async(req,res)=>{try{const actor=resolveActorContext(req);if(actor?.actor_type==='platform'||actor?.actor_type==='unresolved')return res.status(403).json({error:'Se requiere contexto empresarial'});const scoped=isAdmin(req)?{clause:'',values:[]}:{clause:' where company_id=$1',values:[companyId(req)]};const q=async sql=>Number((await pool.query(sql,scoped.values)).rows[0].n||0);res.json({trucks:await q(`select count(*) n from trucks${scoped.clause}`),enroute:await q(`select count(*) n from trucks${scoped.clause}${scoped.clause?' and':' where'} status='En ruta'`),loads:await q(`select count(*) n from loads${scoped.clause}`),alerts:await q(`select count(*) n from alerts${scoped.clause}${scoped.clause?' and':' where'} resolved=false`),fuel:await q(`select coalesce(sum(total_clp),0) n from fuel${scoped.clause}`),km:await q(`select coalesce(sum(km),0) n from trucks${scoped.clause}`)})}catch(e){res.status(500).json({error:"No se pudo cargar el dashboard"})}});
 
 // LEGACY: /api/:table solo mantiene compatibilidad con módulos existentes. Los módulos nuevos no deben usar CRUD genérico.
 app.get("/api/:table",requireTablePermission(readPermissions),async(req,res)=>{if(!safeTable(req.params.table))return res.sendStatus(404);try{if(isAdmin(req))return res.json((await pool.query(`select * from ${req.params.table} order by id desc`)).rows);res.json((await pool.query(`select * from ${req.params.table} where company_id=$1 order by id desc`,[companyId(req)])).rows)}catch(e){res.status(500).json({error:"No se pudo consultar la información"})}});
 
-app.get("/api/trucks/:id/history",requirePermission("gps.read"),async(req,res)=>{try{const params=isAdmin(req)?[req.params.id]:[req.params.id,companyId(req)];const companyFilter=isAdmin(req)?'':' and t.company_id=$2';res.json((await pool.query(`select telemetry.* from telemetry join trucks t on t.id=telemetry.truck_id where telemetry.truck_id=$1${companyFilter} order by recorded_at desc limit 100`,params)).rows)}catch(e){res.status(500).json({error:"No se pudo consultar el historial GPS"})}});
+app.get("/api/trucks/:id/history",requirePermission("gps.read"),async(req,res)=>{try{const actor=resolveActorContext(req);if(actor?.actor_type==='platform'||actor?.actor_type==='unresolved')return res.status(403).json({error:'Se requiere contexto empresarial'});const params=isAdmin(req)?[req.params.id]:[req.params.id,companyId(req)];const companyFilter=isAdmin(req)?'':' and t.company_id=$2';res.json((await pool.query(`select telemetry.* from telemetry join trucks t on t.id=telemetry.truck_id where telemetry.truck_id=$1${companyFilter} order by recorded_at desc limit 100`,params)).rows)}catch(e){res.status(500).json({error:"No se pudo consultar el historial GPS"})}});
 
 app.post("/api/trucks",requirePermission("fleet.manage"),requireCreationCompany,async(req,res)=>{const{patente,tipo,capacidad_t,driver,status="Disponible",km=0,lat=null,lng=null,location=""}=req.body;if(!patente||!tipo||capacidad_t===undefined)return res.status(400).json({error:"patente, tipo y capacidad_t son obligatorios"});try{const r=await pool.query("insert into trucks(company_id,patente,tipo,capacidad_t,driver,status,km,lat,lng,location) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *",[req.resourceCompanyId,patente.trim().toUpperCase(),tipo,capacidad_t,driver||null,status,km,lat,lng,location]);res.status(201).json(r.rows[0])}catch(e){res.status(400).json({error:e.code==="23505"?"La patente ya existe":"No se pudo crear el camión"})}});
 app.patch("/api/trucks/:id/location",requirePermission("fleet.manage"),(req,res)=>updateLegacyTruckLocation(req,res,pool));

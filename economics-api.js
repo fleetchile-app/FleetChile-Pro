@@ -1,15 +1,22 @@
-const {requirePermission}=require('./auth');
+const {requirePermission,resolveActorContext}=require('./auth');
 const {reauthenticateUser}=require('./auth');
 const {writeAudit}=require('./audit');
 
-const isAdmin=req=>req.user?.role_code==='admin';
+const isLegacyAdmin=req=>req.user?.actor_type==='legacy'&&req.user?.role_code==='admin'&&!req.user?.membership_id&&!req.user?.platform_membership_id;
+const isAdmin=isLegacyAdmin;
 const explicitCompanyId=req=>{
   const raw=req.body?.company_id??req.query?.company_id;
   if(raw===undefined||raw===null||raw==='')return null;
   const value=Number(raw);
   return Number.isInteger(value)&&value>0?value:null;
 };
-const scopedCompanyId=req=>isAdmin(req)?explicitCompanyId(req):req.user?.company_id;
+const scopedCompanyId=req=>{
+  const actor=resolveActorContext(req);
+  if(!actor)return null;
+  if(actor.actor_type==='legacy')return explicitCompanyId(req)||actor.company_id||null;
+  if(actor.actor_type!=='company'||!actor.membership_id||!actor.company_id)return null;
+  return actor.company_id;
+};
 const revenueStatus=(defined,value,legacy)=>legacy?'legacy_unverified':!defined?'not_informed':Number(value)===0?'confirmed_zero':'confirmed_positive';
 const economicView=(trip,profile)=>{
   const legacy=!profile;
