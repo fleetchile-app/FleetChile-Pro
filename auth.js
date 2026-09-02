@@ -118,6 +118,15 @@ function registerAuthRoutes(app,pool){
     catch { res.status(401).json({error:'No se pudo validar la sesión'}); }
   });
 
+  app.post('/api/auth/company-context',authMiddleware.bind(null,pool),async(req,res)=>{
+    if(req.user.actor_type!=='platform'||!req.user.platform_membership_id)return res.status(403).json({error:'Solo un administrador de plataforma puede seleccionar empresa'});
+    const companyId=Number(req.body?.company_id);
+    if(!Number.isInteger(companyId)||companyId<1)return res.status(400).json({error:'Empresa no válida'});
+    const company=(await pool.query('select id,legal_name from companies where id=$1 and active=true',[companyId])).rows[0];
+    if(!company)return res.status(404).json({error:'Empresa no encontrada'});
+    res.json({company});
+  });
+
   const userManagement = (req,res,next)=>{
     const u=req.user;
     const legacy=u?.role_code==='admin'&&!u?.membership_id&&!u?.platform_membership_id;
@@ -206,11 +215,19 @@ async function reauthenticateUser(pool,userId,password){
 async function authMiddleware(pool,req,res,next){
   const user=await authenticateToken(pool,req).catch(()=>null);
   if(!user)return res.status(401).json({error:'Autenticación requerida'});
+  const requestedContext=req.get('x-company-context');
+  if(requestedContext&&user.actor_type==='platform'&&user.platform_membership_id){
+    const companyId=Number(requestedContext);
+    if(!Number.isInteger(companyId)||companyId<1)return res.status(403).json({error:'Contexto empresarial no válido'});
+    const company=await pool.query('select id from companies where id=$1 and active=true',[companyId]);
+    if(!company.rowCount)return res.status(403).json({error:'Empresa no encontrada'});
+    user.active_company_context=companyId;
+  }
   req.user=user;next();
 }
 
 function requirePermission(code){return (req,res,next)=>{if(!req.user)return res.status(401).json({error:'Autenticación requerida'});const legacy=req.user.role_code==='admin'&&!req.user.membership_id&&!req.user.platform_membership_id;if(legacy||(req.user.permissions||[]).includes(code))return next();res.status(403).json({error:`Permiso requerido: ${code}`});};}
-function resolveActorContext(req){const user=req.user;if(!user)return null;const effective=user.actor_type?{actor_type:user.actor_type,scope:user.scope||null,company_id:user.company_id||null,membership_id:user.membership_id||null,platform_membership_id:user.platform_membership_id||null,role:user.role_code||null,permissions:user.permissions||[],reason:user.context_reason||null}:user.scope==='platform'&&user.platform_membership_id?{actor_type:'platform',scope:'platform',company_id:null,membership_id:null,platform_membership_id:user.platform_membership_id,role:user.role_code||null,permissions:user.permissions||[],reason:null}:resolveEffectiveMembership(user);return {user_id:user.id,...effective,legacy_company_id:user.legacy_company_id??(user.actor_type==='legacy'?user.company_id||null:null),legacy_role_code:user.legacy_role_code??(user.actor_type==='legacy'?user.role_code||null:null)};}
+function resolveActorContext(req){const user=req.user;if(!user)return null;const effective=user.actor_type?{actor_type:user.actor_type,scope:user.scope||null,company_id:user.company_id||null,membership_id:user.membership_id||null,platform_membership_id:user.platform_membership_id||null,role:user.role_code||null,permissions:user.permissions||[],reason:user.context_reason||null}:user.scope==='platform'&&user.platform_membership_id?{actor_type:'platform',scope:'platform',company_id:null,membership_id:null,platform_membership_id:user.platform_membership_id,role:user.role_code||null,permissions:user.permissions||[],reason:null}:resolveEffectiveMembership(user);if(effective.actor_type==='platform'&&user.active_company_context)return {user_id:user.id,...effective,scope:'company',company_id:user.active_company_context,context_company_id:user.active_company_context,legacy_company_id:null,legacy_role_code:user.legacy_role_code??null};return {user_id:user.id,...effective,legacy_company_id:user.legacy_company_id??(user.actor_type==='legacy'?user.company_id||null:null),legacy_role_code:user.legacy_role_code??(user.actor_type==='legacy'?user.role_code||null:null)};}
 function requireScopedPermission(code,scope){return (req,res,next)=>{const context=resolveActorContext(req);if(!context)return res.status(401).json({error:'Autenticación requerida'});if(context.actor_type==='unresolved')return res.status(403).json({error:context.reason||'Contexto empresarial requerido'});if(context.scope!==scope||!context.permissions.includes(code))return res.status(403).json({error:`Permiso requerido: ${code}`});if(scope==='company'&&!context.company_id)return res.status(403).json({error:'Empresa autorizada no resuelta'});req.actorContext=context;next();};}
 function requirePlatformPermission(code){return (req,res,next)=>{const u=req.user;const legacy=u?.role_code==='admin'&&!u?.membership_id&&!u?.platform_membership_id;if((u?.scope==='platform'&&u.permissions?.includes(code))||legacy)return next();return res.status(403).json({error:`Permiso requerido: ${code}`});};}
 
