@@ -6,17 +6,17 @@ const path=require('node:path');
 const source=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
 
 test('server resuelve company scope moderno desde resolveActorContext',()=>{
-  assert.match(source,/const companyId=req=>\{const actor=resolveActorContext\(req\);if\(actor\?\.actor_type==='company'\)return actor\.company_id\|\|null;/);
-  assert.match(source,/actor\?\.actor_type==='platform'\|\|actor\?\.actor_type==='unresolved'/);
+  assert.match(source,/const companyId=req=>\{const actor=resolveActorContext\(req\);if\(actor\?\.scope==='company'\)return actor\.company_id\|\|null;/);
+  assert.match(source,/actor\?\.actor_type==='unresolved'\|\|actor\?\.scope!==['"]company['"]\|\|!actor\.company_id/);
 });
 
 test('dashboard rechaza platform y unresolved sin contexto empresarial',()=>{
-  assert.match(source,/app\.get\("\/api\/dashboard"[\s\S]*?actor\?\.actor_type==='platform'\|\|actor\?\.actor_type==='unresolved'[\s\S]*?403/);
+  assert.match(source,/app\.get\("\/api\/dashboard"[\s\S]*?actor\?\.actor_type==='unresolved'\|\|actor\?\.scope!==['"]company['"]\|\|!actor\.company_id[\s\S]*?403/);
   assert.match(source,/where company_id=\$1/);
 });
 
 test('CRUD genérico no permite platform sin contexto y mantiene filtro company',()=>{
-  assert.match(source,/const requireTablePermission=permissions=>[\s\S]*?resolveActorContext\(req\)[\s\S]*?actor\?\.actor_type==='platform'\|\|actor\?\.actor_type==='unresolved'/);
+  assert.match(source,/const requireTablePermission=permissions=>[\s\S]*?resolveActorContext\(req\)[\s\S]*?actor\?\.actor_type==='unresolved'\|\|actor\?\.scope!==['"]company['"]\|\|!actor\.company_id/);
   assert.match(source,/select \* from \$\{req\.params\.table\} where company_id=\$1/);
   assert.match(source,/delete from \$\{req\.params\.table\} \$\{filter\}/);
 });
@@ -57,7 +57,7 @@ test('truck history protege el acceso A→A y A→B mediante la relación truck�
   const fragment=source.slice(start,source.indexOf('\n\n//',start)<0?source.length:source.indexOf('\n\n//',start));
   assert.match(fragment,/where telemetry\.truck_id=\$1/);
   assert.match(fragment,/and t\.company_id=\$2/);
-  assert.match(fragment,/actor\?\.actor_type==='platform'\|\|actor\?\.actor_type==='unresolved'/);
+  assert.match(fragment,/actor\?\.actor_type==='unresolved'\|\|actor\?\.scope!==['"]company['"]\|\|!actor\.company_id/);
 });
 
 test('dashboard moderno utiliza company scope y no permite plataforma sin contexto',()=>{

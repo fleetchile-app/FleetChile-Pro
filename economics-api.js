@@ -14,7 +14,7 @@ const scopedCompanyId=req=>{
   const actor=resolveActorContext(req);
   if(!actor)return null;
   if(actor.actor_type==='legacy')return explicitCompanyId(req)||actor.company_id||null;
-  if(actor.actor_type!=='company'||!actor.membership_id||!actor.company_id)return null;
+  if(actor.scope!=='company'||(!actor.membership_id&&!actor.context_company_id)||!actor.company_id)return null;
   return actor.company_id;
 };
 const revenueStatus=(defined,value,legacy)=>legacy?'legacy_unverified':!defined?'not_informed':Number(value)===0?'confirmed_zero':'confirmed_positive';

@@ -17,6 +17,15 @@ test('platform con contexto validado opera bajo la empresa seleccionada',()=>{
   assert.equal(context.context_company_id,1);
 });
 
+test('el contexto platform habilita los handlers empresariales sin cambiar la identidad',()=>{
+  const server=fs.readFileSync('server.js','utf8');
+  const fleet=fs.readFileSync('fleet-api.js','utf8');
+  const economics=fs.readFileSync('economics-api.js','utf8');
+  assert.match(server,/actor\?\.scope!==['"]company['"]/);
+  assert.match(fleet,/actor\.scope==='company'/);
+  assert.match(economics,/actor\.scope!==['"]company['"]/);
+});
+
 test('platform puede cambiar de empresa sin alterar su identidad base',()=>{
   const first=resolveActorContext({user:{id:1,actor_type:'platform',scope:'platform',platform_membership_id:7,active_company_context:1}});
   const second=resolveActorContext({user:{id:1,actor_type:'platform',scope:'platform',platform_membership_id:7,active_company_context:2}});
