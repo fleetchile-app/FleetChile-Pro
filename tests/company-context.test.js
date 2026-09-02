@@ -41,6 +41,14 @@ test('el contexto requiere validacion backend y el frontend solo lo transporta',
   assert.match(frontend,/X-Company-Context/);
 });
 
+test('todas las requests API del mismo origen reciben el contexto seleccionado',()=>{
+  const frontend=fs.readFileSync('public/auth.js','utf8');
+  assert.match(frontend,/new URL\(url,window\.location\.href\)/);
+  assert.match(frontend,/parsed\.origin===window\.location\.origin/);
+  assert.match(frontend,/parsed\.pathname\.startsWith\('\/api\/'\)/);
+  assert.match(frontend,/if\(isApi&&context\)headers\.set\('X-Company-Context',context\)/);
+});
+
 test('administracion reconoce permisos modernos y no solo admin legacy',()=>{
   const admin=fs.readFileSync('public/admin.js','utf8');
   assert.match(admin,/actor_type==='platform'/);
