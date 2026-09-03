@@ -58,6 +58,22 @@ test('todas las requests API del mismo origen reciben el contexto seleccionado',
   assert.match(frontend,/if\(isApi&&context\)headers\.set\('X-Company-Context',context\)/);
 });
 
+test('6-D exige permiso de cambio y limpia contexto al autenticar/logout',()=>{
+  const auth=fs.readFileSync('auth.js','utf8');
+  const frontend=fs.readFileSync('public/auth.js','utf8');
+  assert.match(auth,/platform\.context\.switch/);
+  assert.match(auth,/requestedContext&&user\.actor_type!==['"]platform['"]/);
+  assert.match(frontend,/localStorage\.removeItem\('fleet_company_context'\)/);
+  assert.match(frontend,/async logout\(\)[\s\S]*fleet_company_context/);
+});
+
+test('6-E audita el cambio de contexto después de validar la empresa',()=>{
+  const auth=fs.readFileSync('auth.js','utf8');
+  const route=auth.slice(auth.indexOf("app.post('/api/auth/company-context'"),auth.indexOf('const userManagement'));
+  assert.match(route,/platform\.context\.switch/);
+  assert.match(route,/company\.id,action:'context_switch',entity:'company_context'/);
+});
+
 test('administracion reconoce permisos modernos y no solo admin legacy',()=>{
   const admin=fs.readFileSync('public/admin.js','utf8');
   assert.match(admin,/actor_type==='platform'/);
@@ -66,4 +82,19 @@ test('administracion reconoce permisos modernos y no solo admin legacy',()=>{
   assert.match(admin,/company\.users\.manage/);
   assert.match(admin,/actor_type==='legacy'&&u\.role_code==='admin'/);
   assert.doesNotMatch(admin,/if\(me\.user\.role_code!==['"]admin/);
+});
+
+test('usuarios resuelve globalidad y empresa desde el contexto canónico',()=>{
+  const auth=fs.readFileSync('auth.js','utf8');
+  const users=auth.slice(auth.indexOf("app.get('/api/users'"),auth.indexOf("app.post('/api/users'"));
+  const create=auth.slice(auth.indexOf("app.post('/api/users'"),auth.indexOf("app.patch('/api/users/:id'"));
+  const update=auth.slice(auth.indexOf("app.patch('/api/users/:id'"),auth.indexOf('async function reauthenticateUser'));
+  assert.match(users,/const context=resolveActorContext\(req\)/);
+  assert.match(users,/const global=context\.scope==='platform'/);
+  assert.match(users,/const cid=global\?null:context\.company_id/);
+  assert.match(create,/const context=resolveActorContext\(req\)/);
+  assert.match(create,/context\.actor_type==='legacy'\?\(b\.company_id\|\|context\.company_id\|\|null\):context\.scope==='platform'/);
+  assert.match(update,/const context=resolveActorContext\(req\)/);
+  assert.match(update,/targetCompany=context\.scope==='company'\?context\.company_id:null/);
+  assert.match(update,/isAdmin\|\|global/);
 });

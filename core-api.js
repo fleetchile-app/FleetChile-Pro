@@ -10,7 +10,7 @@ const adminOnly=(req,res,next)=>{if(req.user?.role_code==='admin')return next();
 const actorContext=req=>resolveActorContext(req);
 const isLegacyAdmin=req=>{const actor=actorContext(req);return actor?.actor_type==='legacy'&&actor.role==='admin'&&!actor.membership_id&&!actor.platform_membership_id;};
 const isAdmin=isLegacyAdmin;
-const companyId=req=>{const actor=actorContext(req);if(!actor)return null;if(actor.actor_type==='company')return actor.company_id||null;if(actor.actor_type==='legacy')return actor.company_id||null;return null;};
+const companyId=req=>{const actor=actorContext(req);if(!actor)return null;if(actor.scope==='company')return actor.company_id||null;if(actor.actor_type==='legacy')return actor.company_id||null;return null;};
 const scoped=(req,alias='')=>{const c=alias?`${alias}.company_id`:'company_id';return isAdmin(req)?{sql:'true',values:[]}:{sql:`${c}=$1`,values:[companyId(req)]};};
 async function resourceBelongsToCompany(pool,table,id,cid){if(!id)return true;const allowed={trucks:'company_id',drivers:'company_id',clients:'company_id',routes:'company_id'};const col=allowed[table];if(!col||!cid)return false;const r=await pool.query(`select id from ${table} where id=$1 and ${col}=$2`,[id,cid]);return !!r.rowCount;}
 async function companyView(db,id){return (await db.query('select id,legal_name,rut,trade_name,email,phone,address,commune,region,active,created_at,updated_at from companies where id=$1',[id])).rows[0]||null;}

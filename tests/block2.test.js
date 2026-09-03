@@ -670,8 +670,7 @@ test('eventos, checklist, cargas y POD escriben audit_logs antes de COMMIT',asyn
   const cases=[
     ['post','/api/operations/trips/:id/events',{event_type:'Control'},'trip_event'],
     ['post','/api/operations/trips/:id/checklist',{truck_id:3,status:'Aprobado'},'vehicle_checklist'],
-    ['post','/api/operations/trips/:id/loads',{cargo:'Carga'},'trip_load'],
-    ['post','/api/operations/trips/:id/deliver',{load_id:9,recipient_name:'Receptor'},'trip_delivery_proof']
+    ['post','/api/operations/trips/:id/loads',{cargo:'Carga'},'trip_load']
   ];
   for(const [method,routePath,body,entity] of cases){
     const pool=transactionalPool(async(sql)=>{
@@ -698,6 +697,24 @@ test('eventos, checklist, cargas y POD escriben audit_logs antes de COMMIT',asyn
     assert.ok(audit.values[6],routePath);
     assert.ok(indexOf(pool.calls,'insert into audit_logs')<indexOf(pool.calls,'COMMIT'),routePath);
   }
+});
+
+test('endpoint legacy de entrega no puede crear un POD CLOSED incompleto',async()=>{
+  const pool=transactionalPool(async()=>{throw new Error('no debe consultar ni mutar');});
+  const app=fakeApp();await registerOperationsRoutes(app,pool);
+  const {res}=await invoke(app.route('post','/api/operations/trips/:id/deliver'),{body:{load_id:9,recipient_name:'Receptor'}});
+  assert.equal(res.statusCode,410);
+  assert.match(res.payload.error,/flujo moderno de evidencias/);
+  assert.equal(pool.calls.length,0);
+});
+
+test('la interfaz administrativa no intenta usar el endpoint legacy de entrega',()=>{
+  const operationsUi=fs.readFileSync(path.join(__dirname,'..','public','operations-ui.js'),'utf8');
+  const appUi=fs.readFileSync(path.join(__dirname,'..','public','app.js'),'utf8');
+  assert.doesNotMatch(operationsUi,/operations\/trips\/\'+id\+'\/deliver/);
+  assert.doesNotMatch(appUi,/operations\/trips\/\$\{id\}\/deliver/);
+  assert.match(operationsUi,/POD debe registrarse desde la aplicación del conductor/);
+  assert.match(appUi,/POD debe registrarse desde la aplicación del conductor/);
 });
 
 test('writeAudit registra company, actor, before/after e IP',async()=>{
