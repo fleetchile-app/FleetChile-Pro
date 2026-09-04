@@ -36,11 +36,12 @@ async function userView(pool,userId){
     lr.code role_code,lr.name role_name,c.legal_name company_name,
     coalesce((select json_agg(json_build_object('id',um.id,'company_id',um.company_id,'active',um.active,'role_code',mr.code,'role_name',mr.name,'permissions',coalesce((select json_agg(p.code order by p.code) from role_permissions rp join permissions p on p.id=rp.permission_id where rp.role_id=um.role_id and p.scope='company'),'[]'::json))) from user_memberships um left join roles mr on mr.id=um.role_id where um.user_id=u.id and um.active=true),'[]'::json) memberships,
     coalesce((select json_agg(json_build_object('id',pm.id,'active',pm.active,'role_code',pr.code,'role_name',pr.name,'permissions',coalesce((select json_agg(p.code order by p.code) from role_permissions rp join permissions p on p.id=rp.permission_id where rp.role_id=pm.role_id and p.scope='platform'),'[]'::json))) from platform_memberships pm left join roles pr on pr.id=pm.role_id where pm.user_id=u.id and pm.active=true),'[]'::json) platform_memberships,
-    coalesce((select json_agg(p.code order by p.code) from role_permissions rp join permissions p on p.id=rp.permission_id where rp.role_id=u.role_id),'[]'::json) legacy_permissions
-    from users u left join roles lr on lr.id=u.role_id left join companies c on c.id=u.company_id where u.id=$1 and u.active=true`,[userId]);
+    coalesce((select json_agg(p.code order by p.code) from role_permissions rp join permissions p on p.id=rp.permission_id where rp.role_id=u.role_id),'[]'::json) legacy_permissions,
+    po.owner_type ownership_role,po.slot ownership_slot,po.active ownership_active
+    from users u left join roles lr on lr.id=u.role_id left join companies c on c.id=u.company_id left join platform_owners po on po.user_id=u.id and po.active=true where u.id=$1 and u.active=true`,[userId]);
   const row=r.rows[0];if(!row)return null;
   const effective=resolveEffectiveMembership(row);
-  return {...row,scope:effective.scope,company_id:effective.company_id,role_code:effective.role||row.role_code,role_name:effective.role?((effective.actor_type==='legacy'?row.role_name:null)||effective.role):row.role_name,permissions:effective.permissions, membership_id:effective.membership_id,platform_membership_id:effective.platform_membership_id,actor_type:effective.actor_type,context_reason:effective.reason,legacy_company_id:row.company_id,legacy_role_code:row.role_code};
+  return {...row,scope:effective.scope,company_id:effective.company_id,role_code:effective.role||row.role_code,role_name:effective.role?((effective.actor_type==='legacy'?row.role_name:null)||effective.role):row.role_name,permissions:effective.permissions, membership_id:effective.membership_id,platform_membership_id:effective.platform_membership_id,actor_type:effective.actor_type,context_reason:effective.reason,legacy_company_id:row.company_id,legacy_role_code:row.role_code,ownership_role:row.ownership_role||null,ownership_slot:row.ownership_slot||null,ownership_active:row.ownership_active===true};
 }
 
 async function userAuditView(db,userId){
