@@ -55,7 +55,8 @@ test('runner incluye la fundación económica después de alertas operacionales'
   assert.ok(MIGRATION_FILES.includes('017_revenue_authorization_values.sql'));
   assert.ok(MIGRATION_FILES.includes('018_economic_reconciliation.sql'));
   assert.ok(MIGRATION_FILES.includes('019_driver_user_assignment.sql'));
-  assert.equal(MIGRATION_FILES.at(-1),'022_platform_company_identity.sql');
+  assert.equal(MIGRATION_FILES.at(-2),'022_platform_company_identity.sql');
+  assert.equal(MIGRATION_FILES.at(-1),'023_platform_governance.sql');
   assert.equal(MIGRATION_FILES.filter(file=>file==='015_economic_foundation.sql').length,1);
   assert.ok(MIGRATION_FILES.indexOf('015_economic_foundation.sql')>MIGRATION_FILES.indexOf('014_operational_alerts.sql'));
   assert.ok(MIGRATION_FILES.indexOf('019_driver_user_assignment.sql')>MIGRATION_FILES.indexOf('018_economic_reconciliation.sql'));
