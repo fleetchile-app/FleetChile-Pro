@@ -37,7 +37,7 @@ async function userView(pool,userId){
     coalesce((select json_agg(json_build_object('id',um.id,'company_id',um.company_id,'active',um.active,'role_code',mr.code,'role_name',mr.name,'permissions',coalesce((select json_agg(p.code order by p.code) from role_permissions rp join permissions p on p.id=rp.permission_id where rp.role_id=um.role_id and p.scope='company'),'[]'::json))) from user_memberships um left join roles mr on mr.id=um.role_id where um.user_id=u.id and um.active=true),'[]'::json) memberships,
     coalesce((select json_agg(json_build_object('id',pm.id,'active',pm.active,'role_code',pr.code,'role_name',pr.name,'permissions',coalesce((select json_agg(p.code order by p.code) from role_permissions rp join permissions p on p.id=rp.permission_id where rp.role_id=pm.role_id and p.scope='platform'),'[]'::json))) from platform_memberships pm left join roles pr on pr.id=pm.role_id where pm.user_id=u.id and pm.active=true),'[]'::json) platform_memberships,
     coalesce((select json_agg(p.code order by p.code) from role_permissions rp join permissions p on p.id=rp.permission_id where rp.role_id=u.role_id),'[]'::json) legacy_permissions,
-    po.owner_type ownership_role,po.slot ownership_slot,po.active ownership_active
+    po.owner_type ownership_role,po.slot ownership_slot,po.active ownership_active,u.must_change_password
     from users u left join roles lr on lr.id=u.role_id left join companies c on c.id=u.company_id left join platform_owners po on po.user_id=u.id and po.active=true where u.id=$1 and u.active=true`,[userId]);
   const row=r.rows[0];if(!row)return null;
   const effective=resolveEffectiveMembership(row);
@@ -118,6 +118,8 @@ function registerAuthRoutes(app,pool){
     try { const user=await authenticateToken(pool,req); if(!user)return res.status(401).json({error:'No autenticado'}); res.json({user}); }
     catch { res.status(401).json({error:'No se pudo validar la sesión'}); }
   });
+
+  app.post('/api/auth/change-password',async(req,res)=>{const user=await authenticateToken(pool,req).catch(()=>null);if(!user)return res.status(401).json({error:'Autenticación requerida'});const current=String(req.body?.current_password||''),next=String(req.body?.new_password||''),confirm=String(req.body?.confirm_password||'');if(!current||next.length<10||next!==confirm)return res.status(400).json({error:'La contraseña nueva debe tener al menos 10 caracteres y coincidir'});if(!(await reauthenticateUser(pool,user.id,current)))return res.status(403).json({error:'La contraseña actual no es válida'});const client=await pool.connect();try{await client.query('BEGIN');const hash=await hashPassword(next);await client.query('update users set password_hash=$1,must_change_password=false,updated_at=now() where id=$2',[hash,user.id]);await writeAudit(client,req,{companyId:null,action:'password_change',entity:'user',entityId:user.id,afterData:{must_change_password:false}});await client.query('COMMIT');res.json({ok:true})}catch(e){await client.query('ROLLBACK');res.status(400).json({error:'No se pudo cambiar la contraseña'})}finally{client.release()}});
 
   app.post('/api/auth/company-context',authMiddleware.bind(null,pool),async(req,res)=>{
     if(req.user.actor_type!=='platform'||!req.user.platform_membership_id)return res.status(403).json({error:'Solo un administrador de plataforma puede seleccionar empresa'});
