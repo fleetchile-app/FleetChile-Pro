@@ -10,7 +10,7 @@ const {registerRoutingRoutes}=require("./routing-api");
 const {createRoutingAdapter}=require("./routing");
 const {registerHealthRoutes}=require("./health-api");
 const {initializeDatabase,startApplication,logStartupError}=require("./startup");
-const {registerAuthRoutes,authMiddleware,requirePermission,resolveActorContext}=require("./auth");
+const {registerAuthRoutes,authMiddleware,requirePermission,resolveActorContext,isPlatformOwner}=require("./auth");
 const {writeAudit}=require("./audit");
 const {registerAdminRoutes}=require("./admin-api");
 const {registerEconomicsRoutes}=require("./economics-api");
@@ -74,7 +74,7 @@ registerRoutingRoutes(app,pool,createRoutingAdapter());
 registerAdminRoutes(app,pool);
 registerEconomicsRoutes(app,pool);
 
-app.get("/api/dashboard",requirePermission("dashboard.read"),async(req,res)=>{try{const actor=resolveActorContext(req);if(actor?.actor_type==='unresolved'||actor?.scope!=='company'||!actor.company_id)return res.status(403).json({error:'Se requiere contexto empresarial'});const scoped=isAdmin(req)?{clause:'',values:[]}:{clause:' where company_id=$1',values:[companyId(req)]};const q=async sql=>Number((await pool.query(sql,scoped.values)).rows[0].n||0);res.json({trucks:await q(`select count(*) n from trucks${scoped.clause}`),enroute:await q(`select count(*) n from trucks${scoped.clause}${scoped.clause?' and':' where'} status='En ruta'`),loads:await q(`select count(*) n from loads${scoped.clause}`),alerts:await q(`select count(*) n from alerts${scoped.clause}${scoped.clause?' and':' where'} resolved=false`),fuel:await q(`select coalesce(sum(total_clp),0) n from fuel${scoped.clause}`),km:await q(`select coalesce(sum(km),0) n from trucks${scoped.clause}`)})}catch(e){res.status(500).json({error:"No se pudo cargar el dashboard"})}});
+app.get("/api/dashboard",requirePermission("dashboard.read"),async(req,res)=>{try{const actor=resolveActorContext(req);if(actor?.actor_type==='unresolved')return res.status(403).json({error:'Se requiere contexto empresarial'});const global=isPlatformOwner(req.user)&&actor?.scope==='platform';if(!global&&(actor?.scope!=='company'||!actor.company_id))return res.status(403).json({error:'Se requiere contexto empresarial'});const scoped=global?{clause:'',values:[]}:{clause:' where company_id=$1',values:[companyId(req)]};const q=async sql=>Number((await pool.query(sql,scoped.values)).rows[0].n||0);res.json({trucks:await q(`select count(*) n from trucks${scoped.clause}`),enroute:await q(`select count(*) n from trucks${scoped.clause}${scoped.clause?' and':' where'} status='En ruta'`),loads:await q(`select count(*) n from loads${scoped.clause}`),alerts:await q(`select count(*) n from alerts${scoped.clause}${scoped.clause?' and':' where'} resolved=false`),fuel:await q(`select coalesce(sum(total_clp),0) n from fuel${scoped.clause}`),km:await q(`select coalesce(sum(km),0) n from trucks${scoped.clause}`)})}catch(e){res.status(500).json({error:"No se pudo cargar el dashboard"})}});
 
 // LEGACY: /api/:table solo mantiene compatibilidad con módulos existentes. Los módulos nuevos no deben usar CRUD genérico.
 app.get("/api/:table",requireTablePermission(readPermissions),async(req,res)=>{if(!safeTable(req.params.table))return res.sendStatus(404);try{if(isAdmin(req))return res.json((await pool.query(`select * from ${req.params.table} order by id desc`)).rows);res.json((await pool.query(`select * from ${req.params.table} where company_id=$1 order by id desc`,[companyId(req)])).rows)}catch(e){res.status(500).json({error:"No se pudo consultar la información"})}});

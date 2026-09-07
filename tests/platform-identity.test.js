@@ -1,7 +1,7 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
-const {resolveActorContext,resolveEffectiveMembership,userView,requireScopedPermission,requirePermission}=require('../auth');
+const {resolveActorContext,resolveEffectiveMembership,userView,requireScopedPermission,requirePermission,isPlatformOwner}=require('../auth');
 
 const effective=(overrides={})=>resolveEffectiveMembership({company_id:10,role_code:'operations',permissions:['trips.manage'],...overrides});
 
@@ -51,6 +51,24 @@ test('un admin legacy no conserva el bypass cuando ya tiene membership scoped',(
   const res={status(){return this},json(){return this}};
   middleware({user:{role_code:'admin',scope:'company',membership_id:9,platform_membership_id:null,permissions:[]}},res,()=>{next=true});
   assert.equal(next,false);
+});
+
+test('ROOT/OWNER tiene precedencia central sin convertir a platform_superadmin normal en root',()=>{
+  const owner={id:1,actor_type:'platform',scope:'platform',platform_membership_id:7,role_code:'platform_superadmin',permissions:[],ownership_role:'primary',ownership_active:true};
+  const delegated={...owner,id:2,ownership_role:null,ownership_active:false};
+  assert.equal(isPlatformOwner(owner),true);
+  assert.equal(isPlatformOwner(delegated),false);
+  const res={status(){return this},json(){return this}};
+  let next=false;requirePermission('maintenance.manage')({user:owner},res,()=>{next=true});assert.equal(next,true);
+  next=false;requirePermission('maintenance.manage')({user:delegated},res,()=>{next=true});assert.equal(next,false);
+});
+
+test('ROOT/OWNER contextualizado puede pasar autorización company sin recibir rol company',()=>{
+  const owner={id:1,actor_type:'platform',scope:'company',company_id:10,context_company_id:10,platform_membership_id:7,role_code:'platform_superadmin',permissions:[],ownership_role:'primary',ownership_active:true};
+  const middleware=requireScopedPermission('maintenance.manage','company');let next=false;
+  const res={status(){return this},json(){return this}};
+  middleware({user:owner},res,()=>{next=true});
+  assert.equal(next,true);assert.equal(owner.role_code,'platform_superadmin');assert.equal(owner.actor_type,'platform');
 });
 
 test('platform_superadmin conserva permisos heredados al proyectar su identidad platform',()=>{
