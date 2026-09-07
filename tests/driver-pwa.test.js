@@ -39,3 +39,9 @@ test('shell PWA y ruta driver están disponibles sin cachear APIs',()=>{
   assert.doesNotMatch(sw.split('self.addEventListener')[0],/\/api\//);
   assert.match(read('server.js'),/app\.get\("\/driver"/);
 });
+
+test('el detalle del viaje carga entregas y POD al abrirse',()=>{
+  const js=read('public/driver.js');
+  assert.match(js,/loadDetailWithDeliveries=loadDetail/);
+  assert.match(js,/await loadDeliveries\(id\)/);
+});
