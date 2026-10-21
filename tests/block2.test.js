@@ -60,6 +60,7 @@ function legacyLoadHandler(){
 
 test('creación de viaje persiste route_id, registra Planificado inicial y audita en la transacción',async()=>{
   const pool=transactionalPool(async(sql,values)=>{
+    if(sql.startsWith('select id from clients'))return {rowCount:1,rows:[{id:8}]};
     if(sql==='BEGIN'||sql==='COMMIT')return {rowCount:0,rows:[]};
     if(sql.startsWith('select id from routes'))return {rowCount:1,rows:[{id:44}]};
     if(sql.startsWith('insert into trips'))return {rowCount:1,rows:[{id:7,company_id:10,route_id:44,status:'Planificado'}]};
@@ -68,7 +69,7 @@ test('creación de viaje persiste route_id, registra Planificado inicial y audit
     throw new Error(`Consulta inesperada: ${sql}`);
   });
   const app=fakeApp();registerCoreRoutes(app,pool);
-  const {res}=await invoke(app.route('post','/api/trips'),{body:{origin:'Santiago',destination:'Temuco',route_id:44,status:'Completado'}});
+  const {res}=await invoke(app.route('post','/api/trips'),{body:{client_id:8,origin:'Santiago',destination:'Temuco',route_id:44,status:'Completado'}});
   assert.equal(res.statusCode,201);
   const insert=pool.calls.find(call=>call.sql.startsWith('insert into trips'));
   assert.match(insert.sql,/client_id,route_id,origin/);
@@ -88,12 +89,13 @@ test('creación de viaje persiste route_id, registra Planificado inicial y audit
 
 test('creación de viaje rechaza route_id de otra empresa sin insertar',async()=>{
   const pool=transactionalPool(async sql=>{
+    if(sql.startsWith('select id from clients'))return {rowCount:1,rows:[{id:8}]};
     if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
     if(sql.startsWith('select id from routes'))return {rowCount:0,rows:[]};
     throw new Error(`Consulta inesperada: ${sql}`);
   });
   const app=fakeApp();registerCoreRoutes(app,pool);
-  const {res}=await invoke(app.route('post','/api/trips'),{body:{origin:'A',destination:'B',route_id:99}});
+  const {res}=await invoke(app.route('post','/api/trips'),{body:{client_id:8,origin:'A',destination:'B',route_id:99}});
   assert.equal(res.statusCode,403);
   assert.equal(pool.calls.some(call=>call.sql.startsWith('insert into trips')),false);
   assert.equal(pool.calls.at(-1).sql,'ROLLBACK');
@@ -101,13 +103,14 @@ test('creación de viaje rechaza route_id de otra empresa sin insertar',async()=
 
 test('fallo del historial inicial revierte la creación sin auditoría ni COMMIT',async()=>{
   const pool=transactionalPool(async sql=>{
+    if(sql.startsWith('select id from clients'))return {rowCount:1,rows:[{id:8}]};
     if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
     if(sql.startsWith('insert into trips'))return {rowCount:1,rows:[{id:7,company_id:10,status:'Planificado'}]};
     if(sql.startsWith('insert into trip_status_history'))throw new Error('history failed');
     throw new Error(`Consulta inesperada: ${sql}`);
   });
   const app=fakeApp();registerCoreRoutes(app,pool);
-  const {res}=await invoke(app.route('post','/api/trips'),{body:{origin:'A',destination:'B'}});
+  const {res}=await invoke(app.route('post','/api/trips'),{body:{client_id:8,origin:'A',destination:'B'}});
   assert.equal(res.statusCode,400);
   assert.equal(pool.calls.some(call=>call.sql.startsWith('insert into audit_logs')),false);
   assert.equal(pool.calls.some(call=>call.sql==='COMMIT'),false);
@@ -116,6 +119,7 @@ test('fallo del historial inicial revierte la creación sin auditoría ni COMMIT
 
 test('fallo de auditoría revierte la creación de viaje',async()=>{
   const pool=transactionalPool(async sql=>{
+    if(sql.startsWith('select id from clients'))return {rowCount:1,rows:[{id:8}]};
     if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
     if(sql.startsWith('insert into trips'))return {rowCount:1,rows:[{id:7,company_id:10,status:'Planificado'}]};
     if(sql.startsWith('insert into trip_status_history'))return {rowCount:1,rows:[]};
@@ -123,7 +127,7 @@ test('fallo de auditoría revierte la creación de viaje',async()=>{
     throw new Error(`Consulta inesperada: ${sql}`);
   });
   const app=fakeApp();registerCoreRoutes(app,pool);
-  const {res}=await invoke(app.route('post','/api/trips'),{body:{origin:'A',destination:'B'}});
+  const {res}=await invoke(app.route('post','/api/trips'),{body:{client_id:8,origin:'A',destination:'B'}});
   assert.equal(res.statusCode,400);
   assert.equal(pool.calls.some(call=>call.sql.startsWith('insert into trip_status_history')),true);
   assert.equal(pool.calls.some(call=>call.sql==='COMMIT'),false);
@@ -169,6 +173,7 @@ test('asignación Planificado a Asignado registra historial, evento y auditoría
   const before={id:7,company_id:10,status:'Planificado',truck_id:null,driver_id:null,route_id:null};
   const after={...before,status:'Asignado',truck_id:3,driver_id:4,route_id:44};
   const pool=transactionalPool(async(sql)=>{
+    if(sql.startsWith('select id from clients'))return {rowCount:1,rows:[{id:8}]};
     if(['BEGIN','COMMIT'].includes(sql))return {rowCount:0,rows:[]};
     if(sql.includes('select * from trips t'))return {rowCount:1,rows:[before]};
     if(/^select id from (trucks|drivers|routes)/.test(sql))return {rowCount:1,rows:[{id:1}]};
@@ -177,7 +182,7 @@ test('asignación Planificado a Asignado registra historial, evento y auditoría
     throw new Error(`Consulta inesperada: ${sql}`);
   });
   const app=fakeApp();await registerOperationsRoutes(app,pool);
-  const {res}=await invoke(app.route('patch','/api/operations/trips/:id/assign'),{body:{truck_id:3,driver_id:4,route_id:44}});
+  const {res}=await invoke(app.route('patch','/api/operations/trips/:id/assign'),{body:{client_id:8,truck_id:3,driver_id:4,route_id:44}});
   assert.equal(res.statusCode,200);
   const history=pool.calls.find(call=>call.sql.startsWith('insert into trip_status_history'));
   assert.deepEqual(history.values.slice(0,3),['7','Planificado','Asignado']);
@@ -191,6 +196,7 @@ test('asignación Planificado a Asignado registra historial, evento y auditoría
 
 test('fallo intermedio de asignación ejecuta ROLLBACK sin auditoría ni COMMIT',async()=>{
   const pool=transactionalPool(async(sql)=>{
+    if(sql.startsWith('select id from clients'))return {rowCount:1,rows:[{id:8}]};
     if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
     if(sql.includes('select * from trips t'))return {rowCount:1,rows:[{id:7,company_id:10,status:'Planificado'}]};
     if(sql.startsWith('select id from trucks')||sql.startsWith('select id from drivers'))return {rowCount:1,rows:[{id:1}]};
@@ -200,7 +206,7 @@ test('fallo intermedio de asignación ejecuta ROLLBACK sin auditoría ni COMMIT'
     throw new Error(`Consulta inesperada: ${sql}`);
   });
   const app=fakeApp();await registerOperationsRoutes(app,pool);
-  const {res}=await invoke(app.route('patch','/api/operations/trips/:id/assign'),{body:{truck_id:3,driver_id:4}});
+  const {res}=await invoke(app.route('patch','/api/operations/trips/:id/assign'),{body:{client_id:8,truck_id:3,driver_id:4}});
   assert.equal(res.statusCode,400);
   assert.equal(pool.calls.some(call=>call.sql.startsWith('insert into audit_logs')),false);
   assert.equal(pool.calls.some(call=>call.sql==='COMMIT'),false);
@@ -209,6 +215,7 @@ test('fallo intermedio de asignación ejecuta ROLLBACK sin auditoría ni COMMIT'
 
 test('fallo de auditoría revierte la asignación',async()=>{
   const pool=transactionalPool(async(sql)=>{
+    if(sql.startsWith('select id from clients'))return {rowCount:1,rows:[{id:8}]};
     if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
     if(sql.includes('select * from trips t'))return {rowCount:1,rows:[{id:7,company_id:10,status:'Planificado'}]};
     if(sql.startsWith('select id from trucks')||sql.startsWith('select id from drivers'))return {rowCount:1,rows:[{id:1}]};
@@ -218,7 +225,7 @@ test('fallo de auditoría revierte la asignación',async()=>{
     throw new Error(`Consulta inesperada: ${sql}`);
   });
   const app=fakeApp();await registerOperationsRoutes(app,pool);
-  const {res}=await invoke(app.route('patch','/api/operations/trips/:id/assign'),{body:{truck_id:3,driver_id:4}});
+  const {res}=await invoke(app.route('patch','/api/operations/trips/:id/assign'),{body:{client_id:8,truck_id:3,driver_id:4}});
   assert.equal(res.statusCode,400);
   assert.equal(pool.calls.some(call=>call.sql==='COMMIT'),false);
   assert.equal(pool.calls.at(-1).sql,'ROLLBACK');
@@ -235,7 +242,7 @@ for(const endpoint of statusEndpoints){
       if(sql.startsWith('insert into trip_status_history')||sql.startsWith('insert into trip_events')||sql.startsWith('insert into audit_logs'))return {rowCount:1,rows:[]};
       throw new Error(`Consulta inesperada: ${sql}`);
     });
-    const {res}=await invoke(await statusRoute(endpoint,pool),{body:{status:'En carga'}});
+    const {res}=await invoke(await statusRoute(endpoint,pool),{body:{client_id:8,status:'En carga'}});
     assert.equal(res.statusCode,200);
     const select=pool.calls.find(call=>call.sql.includes('select * from trips where'));
     assert.match(select.sql,/company_id=\$2 for update$/);
@@ -267,7 +274,7 @@ for(const endpoint of statusEndpoints){
       if(sql.startsWith('insert into trip_status_history')||sql.startsWith('insert into trip_events')||sql.startsWith('insert into audit_logs'))return {rowCount:1,rows:[]};
       throw new Error(`Consulta inesperada: ${sql}`);
     });
-    const {res}=await invoke(await statusRoute(endpoint,pool),{body:{status:'Completado'}});
+    const {res}=await invoke(await statusRoute(endpoint,pool),{body:{client_id:8,status:'Completado'}});
     assert.equal(res.statusCode,200);
     const update=pool.calls.find(call=>call.sql.startsWith('update trips set'));
     assert.match(update.sql,/actual_arrival=case when \$1='Completado'/);
@@ -295,7 +302,7 @@ for(const endpoint of statusEndpoints){
       if(sql.startsWith('insert into trip_status_history'))throw new Error('history failed');
       throw new Error(`Consulta inesperada: ${sql}`);
     });
-    const {res}=await invoke(await statusRoute(endpoint,pool),{body:{status:'En carga'}});
+    const {res}=await invoke(await statusRoute(endpoint,pool),{body:{client_id:8,status:'En carga'}});
     assert.equal(res.statusCode,400);
     assert.ok(indexOf(pool.calls,'update trips set')<indexOf(pool.calls,'insert into trip_status_history'));
     assert.ok(indexOf(pool.calls,'insert into trip_status_history')<indexOf(pool.calls,'ROLLBACK'));
@@ -315,7 +322,7 @@ for(const endpoint of statusEndpoints){
       if(sql.startsWith('insert into trip_events'))throw new Error('event failed');
       throw new Error(`Consulta inesperada: ${sql}`);
     });
-    const {res}=await invoke(await statusRoute(endpoint,pool),{body:{status:'En carga'}});
+    const {res}=await invoke(await statusRoute(endpoint,pool),{body:{client_id:8,status:'En carga'}});
     assert.equal(res.statusCode,400);
     assert.ok(indexOf(pool.calls,'insert into trip_status_history')<indexOf(pool.calls,'insert into trip_events'));
     assert.ok(indexOf(pool.calls,'insert into trip_events')<indexOf(pool.calls,'ROLLBACK'));
@@ -334,7 +341,7 @@ for(const endpoint of statusEndpoints){
       if(sql.startsWith('insert into audit_logs'))throw new Error('audit failed');
       throw new Error(`Consulta inesperada: ${sql}`);
     });
-    const {res}=await invoke(await statusRoute(endpoint,pool),{body:{status:'En carga'}});
+    const {res}=await invoke(await statusRoute(endpoint,pool),{body:{client_id:8,status:'En carga'}});
     assert.equal(res.statusCode,400);
     assert.ok(indexOf(pool.calls,'insert into trip_events')<indexOf(pool.calls,'insert into audit_logs'));
     assert.ok(indexOf(pool.calls,'insert into audit_logs')<indexOf(pool.calls,'ROLLBACK'));
@@ -348,7 +355,7 @@ for(const endpoint of statusEndpoints){
       if(sql.includes('select * from trips where'))return {rowCount:0,rows:[]};
       throw new Error(`Consulta inesperada: ${sql}`);
     });
-    const {res}=await invoke(await statusRoute(endpoint,pool),{body:{status:'En carga'}});
+    const {res}=await invoke(await statusRoute(endpoint,pool),{body:{client_id:8,status:'En carga'}});
     assert.equal(res.statusCode,404);
     assert.deepEqual(pool.calls.map(call=>call.sql==='BEGIN'||call.sql==='ROLLBACK'?call.sql:'SELECT'),['BEGIN','SELECT','ROLLBACK']);
     const select=pool.calls[1];
@@ -495,13 +502,14 @@ for(const scenario of ['cross-company','inexistente']){
 
 test('trip_loads: fallo del INSERT ejecuta ROLLBACK sin auditoría ni COMMIT',async()=>{
   const pool=transactionalPool(async(sql)=>{
+    if(sql.startsWith('select id from clients'))return {rowCount:1,rows:[{id:8}]};
     if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
     if(sql.includes('select id,company_id from trips t'))return {rowCount:1,rows:[{id:7,company_id:10}]};
     if(sql.startsWith('insert into trip_loads'))throw new Error('insert failed');
     throw new Error(`Consulta inesperada: ${sql}`);
   });
   const app=fakeApp();await registerOperationsRoutes(app,pool);
-  const {res}=await invoke(app.route('post','/api/operations/trips/:id/loads'),{body:{cargo:'Carga'}});
+  const {res}=await invoke(app.route('post','/api/operations/trips/:id/loads'),{body:{client_id:8,cargo:'Carga'}});
   assert.equal(res.statusCode,400);
   assert.ok(indexOf(pool.calls,'insert into trip_loads')<indexOf(pool.calls,'ROLLBACK'));
   assert.equal(pool.calls.some(call=>call.sql.startsWith('insert into audit_logs')),false);
@@ -512,6 +520,7 @@ test('trip_loads: fallo del INSERT ejecuta ROLLBACK sin auditoría ni COMMIT',as
 test('trip_loads: fallo de auditoría revierte la carga sin COMMIT',async()=>{
   const created={id:23,trip_id:7,cargo:'Carga'};
   const pool=transactionalPool(async(sql)=>{
+    if(sql.startsWith('select id from clients'))return {rowCount:1,rows:[{id:8}]};
     if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
     if(sql.includes('select id,company_id from trips t'))return {rowCount:1,rows:[{id:7,company_id:10}]};
     if(sql.startsWith('insert into trip_loads'))return {rowCount:1,rows:[created]};
@@ -519,7 +528,7 @@ test('trip_loads: fallo de auditoría revierte la carga sin COMMIT',async()=>{
     throw new Error(`Consulta inesperada: ${sql}`);
   });
   const app=fakeApp();await registerOperationsRoutes(app,pool);
-  const {res}=await invoke(app.route('post','/api/operations/trips/:id/loads'),{body:{cargo:'Carga'}});
+  const {res}=await invoke(app.route('post','/api/operations/trips/:id/loads'),{body:{client_id:8,cargo:'Carga'}});
   assert.equal(res.statusCode,400);
   assert.ok(indexOf(pool.calls,'insert into trip_loads')<indexOf(pool.calls,'insert into audit_logs'));
   assert.ok(indexOf(pool.calls,'insert into audit_logs')<indexOf(pool.calls,'ROLLBACK'));
@@ -577,19 +586,20 @@ test('trip_loads: detalle autoriza el viaje antes de devolver loads filtradas po
 test('loads legacy: creación conserva payload, audita y confirma en orden transaccional',async()=>{
   const created={id:31,company_id:10,client:'Cliente',guide:'G-1',cargo:'Carga',weight_kg:100,volume_m3:4,value_clp:90000,truck:null,origin:'A',destination:'B',status:'Planificada'};
   const pool=transactionalPool(async(sql)=>{
+    if(sql.startsWith('select id,name from clients'))return {rowCount:1,rows:[{id:8,name:'Cliente'}]};
     if(['BEGIN','COMMIT'].includes(sql))return {rowCount:0,rows:[]};
     if(sql.startsWith('insert into loads'))return {rowCount:1,rows:[created]};
     if(sql.startsWith('insert into audit_logs'))return {rowCount:1,rows:[]};
     throw new Error(`Consulta inesperada: ${sql}`);
   });
-  const req={body:{client:'Cliente',guide:'G-1',cargo:'Carga',weight_kg:100,volume_m3:4,value_clp:90000,origin:'A',destination:'B'},resourceCompanyId:10,user:{id:5},ip:'127.0.0.1'};
+  const req={body:{client_id:8,client:'Cliente',guide:'G-1',cargo:'Carga',weight_kg:100,volume_m3:4,value_clp:90000,origin:'A',destination:'B'},resourceCompanyId:10,user:{id:5},ip:'127.0.0.1'};
   const res=response();await legacyLoadHandler()(req,res,pool);
   assert.equal(res.statusCode,201);
   assert.deepEqual(res.payload,created);
   const insert=pool.calls.find(call=>call.sql.startsWith('insert into loads'));
   assert.deepEqual(insert.values,[10,'Cliente','G-1','Carga',100,4,90000,null,'A','B','Planificada']);
   const audit=auditCall(pool.calls);
-  assert.deepEqual(audit.values.slice(0,7),[10,5,'create','loads','31',null,created]);
+  assert.deepEqual(audit.values.slice(0,7),[10,5,'create','loads','31',null,{...created,client_id:8}]);
   assert.ok(indexOf(pool.calls,'BEGIN')<indexOf(pool.calls,'insert into loads'));
   assert.ok(indexOf(pool.calls,'insert into loads')<indexOf(pool.calls,'insert into audit_logs'));
   assert.ok(indexOf(pool.calls,'insert into audit_logs')<indexOf(pool.calls,'COMMIT'));
@@ -599,11 +609,12 @@ test('loads legacy: creación conserva payload, audita y confirma en orden trans
 
 test('loads legacy: fallo del INSERT ejecuta ROLLBACK sin auditoría ni COMMIT',async()=>{
   const pool=transactionalPool(async(sql)=>{
+    if(sql.startsWith('select id,name from clients'))return {rowCount:1,rows:[{id:8,name:'Cliente'}]};
     if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
     if(sql.startsWith('insert into loads'))throw new Error('insert failed');
     throw new Error(`Consulta inesperada: ${sql}`);
   });
-  const req={body:{cargo:'Carga'},resourceCompanyId:10,user:{id:5}};
+  const req={body:{client_id:8,cargo:'Carga'},resourceCompanyId:10,user:{id:5}};
   const res=response();await legacyLoadHandler()(req,res,pool);
   assert.equal(res.statusCode,400);
   assert.ok(indexOf(pool.calls,'insert into loads')<indexOf(pool.calls,'ROLLBACK'));
@@ -615,12 +626,13 @@ test('loads legacy: fallo del INSERT ejecuta ROLLBACK sin auditoría ni COMMIT',
 test('loads legacy: fallo de auditoría revierte la carga sin COMMIT',async()=>{
   const created={id:31,company_id:10,cargo:'Carga'};
   const pool=transactionalPool(async(sql)=>{
+    if(sql.startsWith('select id,name from clients'))return {rowCount:1,rows:[{id:8,name:'Cliente'}]};
     if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
     if(sql.startsWith('insert into loads'))return {rowCount:1,rows:[created]};
     if(sql.startsWith('insert into audit_logs'))throw new Error('audit failed');
     throw new Error(`Consulta inesperada: ${sql}`);
   });
-  const req={body:{cargo:'Carga'},resourceCompanyId:10,user:{id:5}};
+  const req={body:{client_id:8,cargo:'Carga'},resourceCompanyId:10,user:{id:5}};
   const res=response();await legacyLoadHandler()(req,res,pool);
   assert.equal(res.statusCode,400);
   assert.ok(indexOf(pool.calls,'insert into loads')<indexOf(pool.calls,'insert into audit_logs'));
@@ -631,13 +643,14 @@ test('loads legacy: fallo de auditoría revierte la carga sin COMMIT',async()=>{
 
 test('loads legacy: validación de camión se conserva antes de abrir la transacción',async()=>{
   const pool=transactionalPool(async(sql,values)=>{
+    if(sql.startsWith('select id,name from clients'))return {rowCount:1,rows:[{id:8,name:'Cliente'}]};
     if(sql.startsWith('select id from trucks')){
       assert.deepEqual(values,['OTRA-1',10]);
       return {rowCount:0,rows:[]};
     }
     throw new Error(`Consulta inesperada: ${sql}`);
   });
-  const req={body:{cargo:'Carga',truck:'OTRA-1'},resourceCompanyId:10,user:{id:5}};
+  const req={body:{client_id:8,cargo:'Carga',truck:'OTRA-1'},resourceCompanyId:10,user:{id:5}};
   const res=response();await legacyLoadHandler()(req,res,pool);
   assert.equal(res.statusCode,403);
   assert.equal(pool.calls.length,1);
@@ -652,12 +665,13 @@ test('loads legacy: conserva middleware de empresa y contexto transversal admin'
   assert.match(source,/const companyId=req=>\{const actor=resolveActorContext\(req\);if\(actor\?\.scope==='company'\)return actor\.company_id\|\|null;/);
   const created={id:31,company_id:20,cargo:'Carga'};
   const pool=transactionalPool(async(sql)=>{
+    if(sql.startsWith('select id,name from clients'))return {rowCount:1,rows:[{id:8,name:'Cliente'}]};
     if(['BEGIN','COMMIT'].includes(sql))return {rowCount:0,rows:[]};
     if(sql.startsWith('insert into loads'))return {rowCount:1,rows:[created]};
     if(sql.startsWith('insert into audit_logs'))return {rowCount:1,rows:[]};
     throw new Error(`Consulta inesperada: ${sql}`);
   });
-  const req={body:{cargo:'Carga',company_id:20},resourceCompanyId:20,user:{id:1,role_code:'admin'}};
+  const req={body:{client_id:8,cargo:'Carga',company_id:20},resourceCompanyId:20,user:{id:1,role_code:'admin'}};
   const res=response();await legacyLoadHandler()(req,res,pool);
   assert.equal(res.statusCode,201);
   const insert=pool.calls.find(call=>call.sql.startsWith('insert into loads'));
@@ -670,10 +684,11 @@ test('eventos, checklist, cargas y POD escriben audit_logs antes de COMMIT',asyn
   const cases=[
     ['post','/api/operations/trips/:id/events',{event_type:'Control'},'trip_event'],
     ['post','/api/operations/trips/:id/checklist',{truck_id:3,status:'Aprobado'},'vehicle_checklist'],
-    ['post','/api/operations/trips/:id/loads',{cargo:'Carga'},'trip_load']
+    ['post','/api/operations/trips/:id/loads',{cargo:'Carga',client_id:8},'trip_load']
   ];
   for(const [method,routePath,body,entity] of cases){
     const pool=transactionalPool(async(sql)=>{
+    if(sql.startsWith('select id from clients'))return {rowCount:1,rows:[{id:8}]};
       if(['BEGIN','COMMIT'].includes(sql))return {rowCount:0,rows:[]};
       if(sql.includes('from trips t')||sql.includes('from trips where'))return {rowCount:1,rows:[{id:7,company_id:10,status:'Asignado'}]};
       if(sql.startsWith('select id from trucks'))return {rowCount:1,rows:[{id:3}]};

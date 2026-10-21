@@ -418,7 +418,7 @@ test('lookups operacionales con ID reservan $1 y company_id usa $2',async()=>{
     ['patch','/api/operations/trips/:id/assign',{body:{truck_id:1},permission:'trips.manage'}],
     ['post','/api/operations/trips/:id/events',{body:{event_type:'Control'},permission:'trips.manage'}],
     ['post','/api/operations/trips/:id/checklist',{body:{truck_id:1},permission:'trips.manage'}],
-    ['post','/api/operations/trips/:id/loads',{body:{cargo:'Carga'},permission:'loads.manage'}]
+    ['post','/api/operations/trips/:id/loads',{body:{cargo:'Carga',client_id:8},permission:'loads.manage'}]
   ];
   for(const [method,path,config] of cases){
     const app=fakeApp();

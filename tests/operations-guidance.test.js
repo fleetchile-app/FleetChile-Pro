@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 
 function surface({trip={},permissions=['trips.manage']}={}){
-  const record={id:7,status:'Planificado',origin:'Origen de prueba',destination:'Destino de prueba',planned_departure:'2026-10-22T10:00:00Z',planned_arrival:'2026-10-22T12:00:00Z',loads:[],...trip};
+  const record={id:7,status:'Planificado',client_id:11,origin:'Origen de prueba',destination:'Destino de prueba',planned_departure:'2026-10-22T10:00:00Z',planned_arrival:'2026-10-22T12:00:00Z',loads:[],...trip};
   const options={routes:[],clients:[],trucks:[{id:8,patente:'PRUEBA',tipo:'Camión',status:'Disponible'}],drivers:[{id:9,name:'Conductor de prueba',status:'Activo'}]};
   const elements={};
   const requests=[];
@@ -13,7 +13,7 @@ function surface({trip={},permissions=['trips.manage']}={}){
   const document={getElementById:id=>elements[id]||(elements[id]=element()),querySelector:()=>null};
   const context={document,Auth:{user:{role_code:'operations',permissions}},money:()=>'',badge:()=>'',alert:message=>alerts.push(message),FormData:class{constructor(form){return form.data}},fetch:async(url,opt={})=>{
     requests.push({url,opt});
-    const payload=url==='/api/operations/options'?options:record;
+    const payload=url.endsWith('/clients')?[{id:11,name:'Mi cliente',rut:'RUT prueba'}]:url==='/api/operations/options'?options:record;
     return {ok:true,status:200,text:async()=>JSON.stringify(payload)};
   }};
   context.window=context;
@@ -28,7 +28,7 @@ test('guía muestra faltantes comprobables y abrir el viaje solo consulta datos 
   const {context,elements,requests}=surface({trip:{origin:'',planned_departure:null,planned_arrival:null}});
   await context.openTrip(7);
   const html=guide(elements.drawerBody.innerHTML);
-  assert.match(html,/Revisa el origen y el destino/);
+  assert.match(html,/Revisa el cliente, el origen y el destino/);
   assert.match(html,/Revisa las fechas/);
   assert.match(html,/Todavía no hay cargas/);
   assert.match(html,/Selecciona el camión y el conductor/);
@@ -89,12 +89,12 @@ test('hints de recursos explican la cuenta asociada y conservan el contrato de a
     assert.ok(elements.form.innerHTML.includes('aria-describedby="'+id+'"'));
     assert.ok(elements.form.innerHTML.includes('id="'+id+'"'));
   }
-  elements.form.data=[['truck_id','8'],['driver_id','9'],['route_id',''],['client_id','']];
+  elements.form.data=[['truck_id','8'],['driver_id','9'],['route_id',''],['client_id','11']];
   await elements.form.onsubmit({preventDefault(){},target:elements.form});
   const saves=requests.filter(request=>request.opt.method);
   assert.equal(saves.length,1);
   assert.equal(saves[0].url,'/api/operations/trips/7/assign');
-  assert.deepEqual(JSON.parse(saves[0].opt.body),{truck_id:8,driver_id:9,route_id:null,client_id:null});
+  assert.deepEqual(JSON.parse(saves[0].opt.body),{truck_id:8,driver_id:9,route_id:null,client_id:11});
   assert.deepEqual(alerts,[]);
 });
 
@@ -105,7 +105,7 @@ test('hints de carga explican múltiples entregas y conservan el POST actual',as
   assert.match(elements.form.innerHTML,/varias cargas al mismo viaje/);
   assert.match(elements.form.innerHTML,/Punto de retiro/);
   assert.match(elements.form.innerHTML,/kilogramos/);
-  elements.form.data=[['cargo','Carga de prueba'],['weight_kg','1200'],['volume_m3','3'],['value_clp','0'],['client_id',''],['origin','Retiro'],['destination','Entrega']];
+  elements.form.data=[['cargo','Carga de prueba'],['weight_kg','1200'],['volume_m3','3'],['value_clp','0'],['client_id','11'],['origin','Retiro'],['destination','Entrega']];
   await elements.form.onsubmit({preventDefault(){},target:elements.form});
   const saves=requests.filter(request=>request.opt.method);
   assert.equal(saves.length,1);
