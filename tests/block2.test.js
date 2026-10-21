@@ -32,7 +32,7 @@ function transactionalPool(resolver){
   const calls=[];
   const client={
     calls,
-    async query(sql,values=[]){calls.push({sql,values});return resolver(sql,values,calls)},
+    async query(sql,values=[]){calls.push({sql,values});if(sql.startsWith('update alerts set resolved=true')||sql.startsWith('insert into alerts'))return {rows:[],rowCount:1};return resolver(sql,values,calls)},
     release(){}
   };
   return {calls,client,async query(sql,values=[]){return client.query(sql,values)},async connect(){return client}};
@@ -135,7 +135,7 @@ test('fallo de auditoría revierte la creación de viaje',async()=>{
 });
 
 test('detalle operacional expone status_history separado de events y ordenado',async()=>{
-  const trip={id:7,company_id:10,status:'Asignado'};
+  const trip={id:7,company_id:10,status:'Asignado',truck_id:3,driver_id:4};
   const event={id:31,trip_id:7,event_type:'Control'};
   const history={id:41,trip_id:7,from_status:'Planificado',to_status:'Asignado'};
   const pool=transactionalPool(async(sql,values)=>{
@@ -200,7 +200,7 @@ test('fallo intermedio de asignación ejecuta ROLLBACK sin auditoría ni COMMIT'
     if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
     if(sql.includes('select * from trips t'))return {rowCount:1,rows:[{id:7,company_id:10,status:'Planificado'}]};
     if(sql.startsWith('select id from trucks')||sql.startsWith('select id from drivers'))return {rowCount:1,rows:[{id:1}]};
-    if(sql.startsWith('update trips set'))return {rowCount:1,rows:[{id:7,company_id:10,status:'Asignado'}]};
+    if(sql.startsWith('update trips set'))return {rowCount:1,rows:[{id:7,company_id:10,status:'Asignado',truck_id:3,driver_id:4}]};
     if(sql.startsWith('insert into trip_status_history'))return {rowCount:1,rows:[]};
     if(sql.startsWith('insert into trip_events'))throw new Error('event failed');
     throw new Error(`Consulta inesperada: ${sql}`);
@@ -219,7 +219,7 @@ test('fallo de auditoría revierte la asignación',async()=>{
     if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
     if(sql.includes('select * from trips t'))return {rowCount:1,rows:[{id:7,company_id:10,status:'Planificado'}]};
     if(sql.startsWith('select id from trucks')||sql.startsWith('select id from drivers'))return {rowCount:1,rows:[{id:1}]};
-    if(sql.startsWith('update trips set'))return {rowCount:1,rows:[{id:7,company_id:10,status:'Asignado'}]};
+    if(sql.startsWith('update trips set'))return {rowCount:1,rows:[{id:7,company_id:10,status:'Asignado',truck_id:3,driver_id:4}]};
     if(sql.startsWith('insert into trip_status_history')||sql.startsWith('insert into trip_events'))return {rowCount:1,rows:[]};
     if(sql.startsWith('insert into audit_logs'))throw new Error('audit failed');
     throw new Error(`Consulta inesperada: ${sql}`);
@@ -233,7 +233,7 @@ test('fallo de auditoría revierte la asignación',async()=>{
 
 for(const endpoint of statusEndpoints){
   test(`${endpoint.name}: cambio de estado conserva scope, trazabilidad y orden transaccional`,async()=>{
-    const before={id:7,company_id:10,status:'Asignado'};
+    const before={id:7,company_id:10,status:'Asignado',truck_id:3,driver_id:4};
     const after={...before,status:'En carga'};
     const pool=transactionalPool(async(sql)=>{
       if(['BEGIN','COMMIT'].includes(sql))return {rowCount:0,rows:[]};
@@ -265,7 +265,7 @@ for(const endpoint of statusEndpoints){
   });
 
   test(`${endpoint.name}: Completado conserva trazabilidad sin modificar el camión`,async()=>{
-    const before={id:7,company_id:10,status:'Descargando',truck_id:3};
+    const before={id:7,company_id:10,status:'Descargando',truck_id:3,driver_id:4};
     const after={...before,status:'Completado',actual_arrival:'2026-08-18T15:30:00.000Z'};
     const pool=transactionalPool(async(sql)=>{
       if(['BEGIN','COMMIT'].includes(sql))return {rowCount:0,rows:[]};
@@ -294,7 +294,7 @@ for(const endpoint of statusEndpoints){
   });
 
   test(`${endpoint.name}: fallo de historial revierte sin evento, auditoría ni COMMIT`,async()=>{
-    const before={id:7,company_id:10,status:'Asignado'};
+    const before={id:7,company_id:10,status:'Asignado',truck_id:3,driver_id:4};
     const pool=transactionalPool(async(sql)=>{
       if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
       if(sql.includes('select * from trips where'))return {rowCount:1,rows:[before]};
@@ -313,7 +313,7 @@ for(const endpoint of statusEndpoints){
   });
 
   test(`${endpoint.name}: fallo de evento revierte historial y cambio sin auditoría ni COMMIT`,async()=>{
-    const before={id:7,company_id:10,status:'Asignado'};
+    const before={id:7,company_id:10,status:'Asignado',truck_id:3,driver_id:4};
     const pool=transactionalPool(async(sql)=>{
       if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
       if(sql.includes('select * from trips where'))return {rowCount:1,rows:[before]};
@@ -332,7 +332,7 @@ for(const endpoint of statusEndpoints){
   });
 
   test(`${endpoint.name}: fallo de auditoría revierte cambio, historial y evento sin COMMIT`,async()=>{
-    const before={id:7,company_id:10,status:'Asignado'};
+    const before={id:7,company_id:10,status:'Asignado',truck_id:3,driver_id:4};
     const pool=transactionalPool(async(sql)=>{
       if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
       if(sql.includes('select * from trips where'))return {rowCount:1,rows:[before]};
@@ -370,7 +370,7 @@ for(const endpoint of statusEndpoints){
 }
 
 test('cambio de estado conserva historial/evento y agrega auditoría transaccional',async()=>{
-  const before={id:7,company_id:10,status:'Asignado'};
+  const before={id:7,company_id:10,status:'Asignado',truck_id:3,driver_id:4};
   const after={...before,status:'En carga'};
   const pool=transactionalPool(async(sql)=>{
     if(['BEGIN','COMMIT'].includes(sql))return {rowCount:0,rows:[]};
@@ -390,7 +390,7 @@ test('cambio de estado conserva historial/evento y agrega auditoría transaccion
 });
 
 test('Completado finaliza el viaje sin modificar estado, ubicación ni retorno del camión',async()=>{
-  const before={id:7,company_id:10,status:'Descargando',truck_id:3};
+  const before={id:7,company_id:10,status:'Descargando',truck_id:3,driver_id:4};
   const after={...before,status:'Completado',actual_arrival:'2026-08-18T15:30:00.000Z'};
   const pool=transactionalPool(async(sql)=>{
     if(['BEGIN','COMMIT'].includes(sql))return {rowCount:0,rows:[]};
@@ -410,7 +410,7 @@ test('Completado finaliza el viaje sin modificar estado, ubicación ni retorno d
 });
 
 test('endpoint core de estado también audita dentro de su transacción',async()=>{
-  const before={id:7,company_id:10,status:'En carga'};
+  const before={id:7,company_id:10,status:'En carga',truck_id:3,driver_id:4};
   const after={...before,status:'En tránsito'};
   const pool=transactionalPool(async(sql)=>{
     if(['BEGIN','COMMIT'].includes(sql))return {rowCount:0,rows:[]};
@@ -562,7 +562,7 @@ test('trip_loads: admin conserva bypass del viaje y valida cliente contra la emp
 test('trip_loads: detalle autoriza el viaje antes de devolver loads filtradas por trip_id',async()=>{
   const load={id:23,trip_id:7,cargo:'Carga A'};
   const pool=transactionalPool(async(sql,values,calls)=>{
-    if(sql.includes('from trips t left join trucks'))return {rowCount:1,rows:[{id:7,company_id:10,status:'Asignado'}]};
+    if(sql.includes('from trips t left join trucks'))return {rowCount:1,rows:[{id:7,company_id:10,status:'Asignado',truck_id:3,driver_id:4}]};
     if(sql.startsWith('select * from trip_loads')){
       assert.equal(calls.length>1,true);
       return {rowCount:1,rows:[load]};
@@ -690,7 +690,7 @@ test('eventos, checklist, cargas y POD escriben audit_logs antes de COMMIT',asyn
     const pool=transactionalPool(async(sql)=>{
     if(sql.startsWith('select id from clients'))return {rowCount:1,rows:[{id:8}]};
       if(['BEGIN','COMMIT'].includes(sql))return {rowCount:0,rows:[]};
-      if(sql.includes('from trips t')||sql.includes('from trips where'))return {rowCount:1,rows:[{id:7,company_id:10,status:'Asignado'}]};
+      if(sql.includes('from trips t')||sql.includes('from trips where'))return {rowCount:1,rows:[{id:7,company_id:10,status:'Asignado',truck_id:3,driver_id:4}]};
       if(sql.startsWith('select id from trucks'))return {rowCount:1,rows:[{id:3}]};
       if(sql.startsWith('select * from trip_loads'))return {rowCount:1,rows:[{id:9,trip_id:7,status:'Planificada'}]};
       if(sql.startsWith('insert into trip_events')&&entity==='trip_event')return {rowCount:1,rows:[{id:21,trip_id:7,event_type:'Control'}]};

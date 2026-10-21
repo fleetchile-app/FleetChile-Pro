@@ -3,8 +3,8 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 
-function surface({trip={},permissions=['trips.manage']}={}){
-  const record={id:7,status:'Planificado',client_id:11,origin:'Origen de prueba',destination:'Destino de prueba',planned_departure:'2026-10-22T10:00:00Z',planned_arrival:'2026-10-22T12:00:00Z',loads:[],...trip};
+function surface({trip={},permissions=['trips.manage'],trips=[]}={}){
+  const record={id:7,company_id:10,status:'Planificado',client_id:11,origin:'Origen de prueba',destination:'Destino de prueba',planned_departure:'2026-10-22T10:00:00Z',planned_arrival:'2026-10-22T12:00:00Z',loads:[],...trip};
   const options={routes:[],clients:[],trucks:[{id:8,patente:'PRUEBA',tipo:'Camión',status:'Disponible'}],drivers:[{id:9,name:'Conductor de prueba',status:'Activo'}]};
   const elements={};
   const requests=[];
@@ -13,7 +13,7 @@ function surface({trip={},permissions=['trips.manage']}={}){
   const document={getElementById:id=>elements[id]||(elements[id]=element()),querySelector:()=>null};
   const context={document,Auth:{user:{role_code:'operations',permissions}},money:()=>'',badge:()=>'',alert:message=>alerts.push(message),FormData:class{constructor(form){return form.data}},fetch:async(url,opt={})=>{
     requests.push({url,opt});
-    const payload=url.endsWith('/clients')?[{id:11,name:'Mi cliente',rut:'RUT prueba'}]:url==='/api/operations/options'?options:record;
+    const payload=url==='/api/trips'?trips:url.endsWith('/clients')?[{id:11,name:'Mi cliente',rut:'RUT prueba'}]:url==='/api/operations/options'?options:record;
     return {ok:true,status:200,text:async()=>JSON.stringify(payload)};
   }};
   context.window=context;
@@ -112,4 +112,43 @@ test('hints de carga explican múltiples entregas y conservan el POST actual',as
   assert.equal(saves[0].url,'/api/operations/trips/7/loads');
   assert.equal(JSON.parse(saves[0].opt.body).weight_kg,1200);
   assert.deepEqual(alerts,[]);
+});
+
+test('viaje incompleto mantiene un aviso visible y permite diferir recursos desde el formulario',async()=>{
+  const {context,elements}=surface();
+  await context.openTrip(7);
+  assert.match(elements.drawerBody.innerHTML,/role="alert"/);
+  assert.match(elements.drawerBody.innerHTML,/No se puede activar sin camión y conductor/);
+  await context.assignTrip(7);
+  assert.match(elements.form.innerHTML,/Asignar conductor después/);
+  assert.match(elements.form.innerHTML,/name="reason"/);
+  assert.doesNotMatch(elements.form.innerHTML,/name="driver_id" required/);
+});
+
+test('historial de reasignación muestra antes y después y escapa el motivo',async()=>{
+  const {context,elements}=surface({trip:{truck_id:8,driver_id:9,events:[{event_type:'Reasignación de recursos',notes:'<script>peligro</script>',details:{before:{truck_id:2,driver_id:3},after:{truck_id:8,driver_id:9}}}]}});
+  await context.openTrip(7);
+  assert.match(elements.drawerBody.innerHTML,/Camión: #2 → #8/);
+  assert.match(elements.drawerBody.innerHTML,/Conductor: #3 → #9/);
+  assert.doesNotMatch(elements.drawerBody.innerHTML,/<script>/);
+  assert.doesNotMatch(elements.drawerBody.innerHTML,/Servicio pendiente de recursos/);
+});
+
+test('transferencia en interfaz ofrece otros viajes abiertos de la misma empresa y envía motivo',async()=>{
+  const {context,elements,requests}=surface({permissions:['trips.manage','loads.manage'],trips:[
+    {id:7,company_id:10,trip_number:'ACTUAL',status:'Asignado'},
+    {id:20,company_id:'10',trip_number:'DESTINO',status:'Planificado',origin:'Origen',destination:'Destino'},
+    {id:30,company_id:20,trip_number:'AJENO',status:'Asignado'},
+    {id:40,company_id:10,trip_number:'TERMINADO',status:'Completado'}
+  ]});
+  await context.openTrip(7);
+  await context.transferTripLoad(7,31);
+  assert.match(elements.form.innerHTML,/DESTINO/);
+  assert.doesNotMatch(elements.form.innerHTML,/AJENO|TERMINADO|ACTUAL/);
+  assert.match(elements.form.innerHTML,/name="reason" required/);
+  elements.form.data=[['target_trip_id','20'],['reason','Reemplazo de equipo']];
+  await elements.form.onsubmit({preventDefault(){},target:elements.form});
+  const save=requests.find(request=>request.opt.method==='POST');
+  assert.equal(save.url,'/api/operations/trips/7/loads/31/transfer');
+  assert.deepEqual(JSON.parse(save.opt.body),{target_trip_id:20,reason:'Reemplazo de equipo'});
 });
