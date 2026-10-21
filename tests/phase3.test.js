@@ -102,6 +102,10 @@ test('GPS live devuelve la posición actual de la empresa y conserva camiones si
   ];
   const pool=transactionalPool(async(sql,values)=>{
     assert.match(sql,/from trucks t left join lateral/);
+    assert.match(sql,/select t\.id,t\.company_id,t\.patente/);
+    assert.match(sql,/te\.lat,te\.lng,te\.km,te\.speed_kmh,te\.recorded_at/);
+    assert.match(sql,/select lat,lng,km,speed_kmh,recorded_at,trip_id from telemetry/);
+    assert.doesNotMatch(sql,/coalesce\(te\.speed_kmh,0\)|t\.lat,t\.lng/);
     assert.match(sql,/order by recorded_at desc,id desc limit 1/);
     assert.match(sql,/where t\.company_id=\$1/);
     assert.match(sql,/order by t\.patente$/);
@@ -113,6 +117,15 @@ test('GPS live devuelve la posición actual de la empresa y conserva camiones si
   assert.equal(res.statusCode,200);
   assert.deepEqual(res.payload,rows);
   assert.equal(pool.calls.length,1);
+});
+
+test('GPS live usa contexto empresarial de plataforma y mantiene el permiso gps.read',async()=>{
+ const pool=transactionalPool(async(sql,values)=>{assert.match(sql,/where t\.company_id=\$1/);assert.deepEqual(values,[20]);return {rowCount:0,rows:[]}});
+ const app=fakeApp();registerFleetRoutes(app,pool);
+ const user={id:5,actor_type:'platform',scope:'platform',platform_membership_id:2,active_company_context:20,permissions:['gps.read']};
+ assert.equal((await invoke(app.route('get','/api/fleet/live'),{user})).res.statusCode,200);
+ assert.equal((await invoke(app.route('get','/api/fleet/live'),{user:{...user,permissions:[]}})).res.statusCode,403);
+ assert.equal(pool.calls.length,1);
 });
 
 test('GPS historial por camión filtra el período y usa orden determinista',async()=>{

@@ -1,0 +1,21 @@
+header{gap:16px}
+header .header-actions{flex-wrap:wrap;justify-content:flex-end;min-width:0}
+header .active-company.header-company{grid-template-columns:30px minmax(0,1fr);gap:8px;margin:0;padding:7px 10px;max-width:290px;min-width:180px}
+header .header-company>b{width:30px;height:30px;margin:0}
+header .header-company>div{display:block;min-width:0}
+header .header-company strong{font-size:11px}
+header .header-company small{font-size:10px;letter-spacing:normal;font-weight:400}
+#companyContextSelect{display:block;width:100%;max-width:260px;margin-top:5px;padding:4px;border:1px solid #ccd9e6;border-radius:4px;color:#173b5d;background:#fff;font:inherit;font-size:11px}
+header #companyContextControl{display:block}
+.operational-kpis{grid-template-columns:repeat(6,minmax(0,1fr))}
+.operational-counter{font:inherit;text-align:left;cursor:pointer}
+.operational-counter.selected{border-color:#1670b8;box-shadow:inset 0 0 0 1px #1670b8}
+.operational-error{padding:10px;border:1px solid #f2d8ae;background:#fff6e9;color:#8a5a08;border-radius:6px;font-size:12px}
+#operationalDashboard .control-head p{margin-top:6px;line-height:1.5}
+#operationalDashboard .fleet-status-list{max-height:430px;overflow:auto}
+#operationalDashboard .control-trips,#operationalDashboard .operational-alerts{max-height:500px;overflow:auto}
+#operationalDashboard .trip-status-dot.stopped{background:#a52b2b}
+#operationalDashboard .control-alert>div{min-width:0;overflow-wrap:anywhere}
+@media(max-width:1200px){.operational-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:900px){header{flex-wrap:wrap}header .header-actions{flex:1}header .active-company.header-company{min-width:160px;max-width:260px}}
+@media(max-width:700px){header .header-actions{width:100%;justify-content:flex-start}header .active-company.header-company{flex:1;max-width:none;min-width:140px}.operational-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}#companyContextSelect{max-width:100%}#operationalDashboard .control-alert{grid-template-columns:24px minmax(0,1fr)}#operationalDashboard .control-alert>.badge{grid-column:2;justify-self:start}}

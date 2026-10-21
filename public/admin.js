@@ -21,6 +21,7 @@
 
   function tabs(active){const owner=window.adminOwner===true;const items=[['overview','Resumen global'],['organization','Empresas'],['users','Usuarios'],['roles','Roles y permisos'],['settings','Configuración'],['audit','Auditoría']];if(owner)items.splice(4,0,['owners','Propietarios']);return `<div class="admin-tabs">${items.map(([k,l])=>`<button class="${active===k?'active':''}" onclick="adminTab('${k}')">${l}</button>`).join('')}</div>`}
   window.configuration=async function(){
+    window.stopControlDashboard?.();
     document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',b===btn));
     document.getElementById('title').textContent='Administración';
     try{const me=await get('auth/me'),u=me.user;const allowed=(u.actor_type==='platform'&&u.permissions?.includes('platform.users.manage'))||(u.actor_type==='company'&&u.membership_id&&u.permissions?.includes('company.users.manage'))||(u.actor_type==='legacy'&&u.role_code==='admin');if(!allowed)throw Error('Esta sección requiere permisos de administración');window.adminSurface=u.actor_type==='platform'?'platform':'company';window.adminOwner=u.ownership_role&&u.ownership_active!==false;await adminTab('overview')}catch(e){document.getElementById('app').innerHTML=`<div class="card admin-denied"><h2>Acceso restringido</h2><p>${esc(e.message)}</p></div>`}
