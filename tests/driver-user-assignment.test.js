@@ -19,7 +19,7 @@ function poolFor(options={}){
     if(sql.includes('from user_sessions'))rows=[{user_id:1}];
     else if(sql.startsWith('update user_sessions'))rows=[];
     else if(sql.startsWith('select u.id from users u')){
-      if(!options.missing&&(values[1]||user.company_id===values[2]||user.memberships?.some(m=>m.company_id===values[2])))rows=[{id:42}];
+      if(!options.missing&&(values[1]||String(user.company_id)===String(values[2])||user.memberships?.some(m=>String(m.company_id)===String(values[2]))))rows=[{id:42}];
     }else if(sql.startsWith('select u.id,u.name,u.email,u.phone,u.company_id,u.driver_id'))rows=[values[0]===1?actor:user];
     else if(sql.startsWith('select d.id,d.name'))rows=[{id:8,name:'Ficha conductor',rut:'RUT prueba',status:'Activo'}];
     else if(sql.startsWith('select id,name,company_id,status from drivers')){
@@ -153,6 +153,38 @@ test('fallo de conexión se controla sin intentar liberar una conexión inexiste
   const {pool,route}=setup({connectFailure:true});
   assert.equal((await invoke(route('patch'))).statusCode,500);
   assert.equal(pool.releases,0);
+});
+
+for(const [name,original,effective,actorCompany] of [
+  ['BIGINT como texto y JSON como número','10',10,10],
+  ['JSON como texto y BIGINT como número',10,'10',10],
+  ['contexto empresarial como texto','10',10,'10']
+]){
+  for(const method of ['get','patch'])test(`${method} asociación acepta la misma empresa con ${name}`,async()=>{
+    const {types}=require('pg');
+    const raw=typeof original==='string'?types.getTypeParser(20)(original):original;
+    const membership=types.getTypeParser(114)(JSON.stringify({company_id:effective}));
+    const {pool,route}=setup({target:{company_id:raw,memberships:[{id:2,company_id:membership.company_id,role_code:'driver',permissions:[]}]}});
+    const actor={id:1,actor_type:'company',scope:'company',company_id:actorCompany,membership_id:1,role_code:'company_admin',permissions:['company.users.manage']};
+    const result=await invoke(route(method),{actor});
+    assert.equal(result.statusCode,200);
+    assert.equal(String(result.payload.user.company_id),'10');
+    assert.equal(pool.calls.at(-1).sql,'COMMIT');
+  });
+}
+
+test('empresa original diferente sigue bloqueada con BIGINT real como texto',async()=>{
+  const {pool,route}=setup({target:{company_id:'20',memberships:[{id:2,company_id:10,role_code:'driver'}]}});
+  assert.equal((await invoke(route('patch'))).statusCode,409);
+  assert.equal(pool.calls.some(call=>call.sql.startsWith('update users set driver_id')),false);
+  assert.equal(pool.calls.at(-1).sql,'ROLLBACK');
+});
+
+test('identificador numérico no seguro no se equipara a un BIGINT exacto',async()=>{
+  const {pool,route}=setup({target:{company_id:'9007199254740993',memberships:[{id:2,company_id:9007199254740992,role_code:'driver'}]}});
+  const actor={id:1,actor_type:'platform',scope:'platform',platform_membership_id:1,role_code:'platform_superadmin',permissions:['platform.users.manage']};
+  assert.equal((await invoke(route('patch'),{actor})).statusCode,409);
+  assert.equal(pool.calls.some(call=>call.sql.startsWith('update users set driver_id')),false);
 });
 
 test('administración permite seleccionar la ficha existente sin reingresar sus datos',async()=>{

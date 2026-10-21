@@ -1,5 +1,14 @@
 const {writeAudit}=require('./audit');
 
+// pg entrega BIGINT como texto, pero json_build_object lo devuelve como número.
+// Comparar sin convertir a Number evita redondear identificadores grandes.
+function sameId(left,right){
+  const canonical=value=>typeof value==='string'&&/^[1-9]\d*$/.test(value)?value:
+    typeof value==='number'&&Number.isSafeInteger(value)&&value>0?String(value):null;
+  const id=canonical(left);
+  return id!==null&&id===canonical(right);
+}
+
 function registerDriverUserAssignmentRoutes(app,pool,{protectedUserRoutes,resolveActorContext,userView}){
   const endpoint='/api/users/:id/driver-assignment';
   const error=(status,message)=>Object.assign(new Error(message),{status});
@@ -13,12 +22,12 @@ function registerDriverUserAssignmentRoutes(app,pool,{protectedUserRoutes,resolv
     if(!locked)throw error(404,'Usuario no encontrado');
     const user=await userView(db,locked.id);
     if(!user)throw error(404,'Usuario activo no encontrado');
-    if(!global&&user.company_id!==context.company_id)throw error(404,'Usuario no encontrado');
+    if(!global&&!sameId(user.company_id,context.company_id))throw error(404,'Usuario no encontrado');
     if(user.role_code!=='driver'||!['company','legacy'].includes(user.actor_type)||!user.company_id){
       throw error(409,'El usuario debe tener un único contexto de empresa y rol conductor activo');
     }
     // El trigger 019 también exige consistencia con la empresa de la identidad original.
-    if(user.legacy_company_id!==user.company_id)throw error(409,'La empresa de la cuenta y su membership requieren revisión antes de asociar un conductor');
+    if(!sameId(user.legacy_company_id,user.company_id))throw error(409,'La empresa de la cuenta y su membership requieren revisión antes de asociar un conductor');
     return {id:user.id,name:user.name,email:user.email,company_id:user.company_id,driver_id:user.driver_id||null};
   }
   function handler(update){return async(req,res)=>{
@@ -44,9 +53,9 @@ function registerDriverUserAssignmentRoutes(app,pool,{protectedUserRoutes,resolv
       const occupied=(await db.query('select id from users where driver_id=$1 and id<>$2',[driver.id,before.id])).rows[0];
       if(occupied)throw error(409,'Este conductor ya está asociado a otro usuario');
       // No transferir una identidad ya vinculada: requiere un proceso separado y explícito.
-      if(before.driver_id&&before.driver_id!==driver.id)throw error(409,'El usuario ya tiene otro conductor asociado; solicita revisión antes de cambiarlo');
+      if(before.driver_id&&!sameId(before.driver_id,driver.id))throw error(409,'El usuario ya tiene otro conductor asociado; solicita revisión antes de cambiarlo');
       const after={...before,driver_id:driver.id};
-      if(before.driver_id!==driver.id){
+      if(!sameId(before.driver_id,driver.id)){
         const updated=await db.query('update users set driver_id=$1,updated_at=now() where id=$2 returning id',[driver.id,before.id]);
         if(!updated.rowCount)throw error(409,'No se pudo asociar el conductor');
         await writeAudit(db,req,{companyId:before.company_id,action:'driver_assignment',entity:'user',entityId:before.id,beforeData:before,afterData:after});
