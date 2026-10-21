@@ -12,7 +12,7 @@ function surface({responses={},user={id:1,company_id:10,actor_type:'company'},co
  const context={A:root,Auth:{user},document,localStorage:{getItem:()=>company},AbortController,Date,
   setTimeout:(callback,delay)=>{timers.set(++timerId,{callback,delay});return timerId},clearTimeout:id=>timers.delete(id),
   fetch:async(url,options)=>{requests.push({url,options});const result=responses[url]??[];if(typeof result==='function')return result(url,options);if(result instanceof Error)throw result;return {ok:!result.error,status:result.error?result.status||500:200,json:async()=>result.error?{error:result.error}:result}}};
- if(leaflet)context.L={map(){const map={removed:false,remove(){this.removed=true},setView(){return this},fitBounds(){return this}};maps.push(map);return map},tileLayer:()=>({addTo(){}}),circleMarker:(point,style)=>{const marker={point,style,popup:'',addTo(){return this},bindPopup(value){this.popup=value;return this}};markers.push(marker);return marker}};
+ if(leaflet)context.L={map(){const map={removed:false,world:false,remove(){this.removed=true},fitWorld(){this.world=true;return this},setView(point){this.center=point;return this},fitBounds(points){this.bounds=points;return this}};maps.push(map);return map},tileLayer:()=>({addTo(map){map.hasBaseLayer=true}}),circleMarker:(point,style)=>{const marker={point,style,popup:'',addTo(){return this},bindPopup(value){this.popup=value;return this}};markers.push(marker);return marker}};
  context.window=context;context.addEventListener=(event,handler)=>events[event]=handler;
  vm.createContext(context);vm.runInContext(source,context);
  return {context,root,elements,nav,requests,timers,events,markers,maps};
@@ -74,7 +74,8 @@ test('no presenta fechas futuras o inválidas como señal reciente',async()=>{
  const s=surface({responses:{'/api/fleet/live':[{id:1,lat:0,lng:0,recorded_at:'inválida'},{id:2,lat:0,lng:0,recorded_at:new Date(Date.now()+3600000).toISOString()}]}});
  await s.context.controlDashboard();
  assert.equal(s.markers.length,0);assert.match(s.root.innerHTML,/Fecha GPS inválida/);
- assert.match(s.elements.controlMap.innerHTML,/Sin posiciones GPS verificables/);
+ assert.match(s.elements.controlMapNotice.textContent,/Sin posiciones GPS verificables/);
+ assert.equal(s.maps[0].hasBaseLayer,true);
 });
 
 test('fallo GPS no oculta viajes ni alarmas ni afirma que no hay vehículos',async()=>{
@@ -141,6 +142,33 @@ test('pestaña oculta detiene consultas y reanuda solo con el dashboard seleccio
 test('mapa externo no disponible no borra la información operacional',async()=>{
  const s=surface({leaflet:false,responses:{'/api/fleet/live':[{id:1,lat:0,lng:0,recorded_at:recent()}],'/api/trips':[trip(1,'Detenido')]}});
  await s.context.controlDashboard();assert.match(s.elements.controlMap.innerHTML,/Mapa no disponible/);assert.match(s.root.innerHTML,/V-1/);
+});
+
+test('mapa base se dibuja sin flota ni coordenadas y no agrega vehículos ficticios',async()=>{
+ for(const fleet of [[],[{id:1,lat:null,lng:null,recorded_at:null}]]){
+  const s=surface({responses:{'/api/fleet/live':fleet}});await s.context.controlDashboard();
+  assert.equal(s.maps.length,1);assert.equal(s.maps[0].world,true);assert.equal(s.maps[0].hasBaseLayer,true);
+  assert.equal(s.maps[0].bounds,undefined);assert.equal(s.markers.length,0);
+  assert.match(s.elements.controlMapNotice.textContent,/mapa base, sin ubicar vehículos/);assert.equal(s.elements.controlMapNotice.hidden,false);
+ }
+});
+
+test('error GPS conserva mapa base y advierte que las posiciones no están disponibles',async()=>{
+ const s=surface({responses:{'/api/fleet/live':{error:'GPS no disponible',status:503}}});await s.context.controlDashboard();
+ assert.equal(s.maps[0].hasBaseLayer,true);assert.equal(s.markers.length,0);
+ assert.match(s.elements.controlMapNotice.textContent,/No se pudo consultar GPS/);
+});
+
+test('posición válida centra el mapa en el vehículo y oculta aviso de ausencia de datos',async()=>{
+ const s=surface({responses:{'/api/fleet/live':[{id:1,lat:-33,lng:-70,recorded_at:recent()}]}});await s.context.controlDashboard();
+ assert.deepEqual(Array.from(s.maps[0].center),[-33,-70]);assert.equal(s.markers.length,1);
+ assert.equal(s.elements.controlMapNotice.hidden,true);
+});
+
+test('sin Leaflet ni GPS muestra error cartográfico en vez de fallar silenciosamente',async()=>{
+ const s=surface({leaflet:false});await s.context.controlDashboard();
+ assert.equal(s.maps.length,0);assert.match(s.elements.controlMap.innerHTML,/Mapa no disponible/);
+ assert.match(s.elements.controlMapNotice.textContent,/Sin posiciones GPS verificables/);
 });
 
 test('textos de API se escapan y no se interpolan identificadores ejecutables',async()=>{
