@@ -14,3 +14,85 @@
 .gps-history-state.error{padding:12px;border:1px solid #f4c6c6;border-radius:7px}
 .gps-history-state .table{min-width:680px}
 @media(max-width:700px){.gps-history-filters{grid-template-columns:1fr}.truck-track-map{height:230px}.gps-signal{white-space:normal}}
+
+/* Trip context belongs to the recorded position, separate from truck metrics. */
+.gps-trip-context{
+  min-width:0;
+  max-width:100%;
+  margin:18px 0;
+  padding:16px;
+  border:1px solid #dfe7f0;
+  border-radius:9px;
+  background:#f4f8fb;
+  color:#173b5d;
+  overflow-wrap:anywhere;
+}
+.gps-trip-context h3{margin:0 0 12px;font-size:16px;line-height:1.4}
+.gps-trip-context .gps-trip-people{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:12px;
+  margin:12px 0;
+  min-width:0;
+}
+.gps-trip-context .gps-trip-people>*{min-width:0}
+.gps-trip-context .gps-trip-people small{display:block;margin-bottom:4px;color:#52657a;font-size:12px;line-height:1.4}
+.gps-trip-context .gps-trip-people strong{display:block;color:#173b5d;font-size:14px;line-height:1.5}
+.gps-trip-context .gps-trip-link{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  min-width:44px;
+  min-height:44px;
+  max-width:100%;
+  padding:11px 14px;
+  border:1px solid #0f67a9;
+  border-radius:7px;
+  background:#0f67a9;
+  color:#fff;
+  font:inherit;
+  font-size:14px;
+  font-weight:700;
+  line-height:1.5;
+  text-align:center;
+  text-decoration:underline;
+  text-underline-offset:3px;
+  white-space:normal;
+  overflow-wrap:anywhere;
+}
+.gps-trip-context .gps-trip-link:hover{background:#0b578f;border-color:#0b578f}
+.gps-trip-context .gps-trip-link:focus-visible{outline:3px solid #0f67a9;outline-offset:3px}
+.gps-trip-context .gps-trip-link svg{flex:0 0 16px;width:16px;height:16px}
+.gps-trip-context .gps-trip-note{margin:12px 0 0;color:#52657a;font-size:12px;line-height:1.6}
+.gps-trip-context[hidden],.gps-trip-context [hidden]{display:none!important}
+@media(max-width:480px){
+  .gps-trip-context{padding:14px}
+  .gps-trip-context .gps-trip-people{grid-template-columns:minmax(0,1fr)}
+  .gps-trip-context .gps-trip-link{display:flex;width:100%}
+}
+
+/* A linked trip uses the existing identity header and full-page trip content. */
+.linked-trip-view aside,
+.linked-trip-view #app,
+.linked-trip-view #dx,
+.linked-trip-view #newBtn{display:none!important}
+.linked-trip-view main{margin-left:0!important;width:100%;min-width:0}
+.linked-trip-view main>header{position:static;inset:auto}
+.linked-trip-view #drawer{position:static;inset:auto;background:transparent;z-index:auto}
+.linked-trip-view #drawer .drawer{
+  position:static;
+  inset:auto;
+  width:min(1100px,100%);
+  max-width:100%;
+  height:auto;
+  max-height:none;
+  min-height:0;
+  margin:0 auto;
+  box-shadow:none;
+  overflow:visible;
+  z-index:auto!important;
+}
+.linked-trip-view #drawer.hidden{display:none!important}
+.linked-trip-view #companyContextControl,
+.linked-trip-view #platformAdminMenuHost{display:none!important}
