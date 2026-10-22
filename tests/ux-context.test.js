@@ -16,5 +16,6 @@ test('Administración expone identidad moderna y nombre accesible',()=>{
   const admin=fs.readFileSync('public/admin.js','utf8');
   assert.match(auth,/modern_role_code/);
   assert.match(auth,/platform_role_code/);
-  assert.match(admin,/aria-label','Administración'/);
+  assert.match(admin,/aria-label','Administración de mi empresa'/);
+  assert.match(admin,/aria-label="Administración de plataforma"/);
 });

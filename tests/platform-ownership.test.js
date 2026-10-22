@@ -33,7 +33,7 @@ test('gobierno de propietarios exige ownership en backend y audita mutaciones',(
 });
 
 test('la consola reserva la sección de propietarios al actor ownership',()=>{
-  assert.match(ui,/window\.adminOwner=u\.ownership_role/);
-  assert.match(ui,/\['owners','Propietarios'\]/);
+  assert.match(ui,/window\.adminOwner=Boolean\(u\.actor_type==='platform'&&u\.ownership_role&&u\.ownership_active!==false\)/);
+  assert.match(ui,/\['owners','Propietarios',owner\(u\)\]/);
   assert.match(ui,/admin\/owners/);
 });

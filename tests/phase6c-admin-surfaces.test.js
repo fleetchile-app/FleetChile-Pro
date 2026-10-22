@@ -5,7 +5,9 @@ const auth=fs.readFileSync(require.resolve('../auth'),'utf8');
 const admin=fs.readFileSync(require.resolve('../public/admin.js'),'utf8');
 
 test('6-C define superficies platform y company sin cambiar identidad',()=>{
-  assert.match(admin,/adminSurface=u\.actor_type==='platform'\?'platform':'company'/);
+  assert.match(admin,/window\.adminSurface=surface/);
+  assert.match(admin,/configuration=\(\)=>enterAdmin\('company','overview'\)/);
+  assert.match(admin,/platformAdministration=tab=>enterAdmin\('platform',tab\)/);
   assert.match(admin,/ADMINISTRACIÓN DE PLATAFORMA/);
   assert.match(admin,/ADMINISTRACIÓN DE EMPRESA/);
 });
