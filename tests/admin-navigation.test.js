@@ -12,7 +12,7 @@ function surface({user=platform,responses={}}={}){
  for(const id of ['app','title','admin-panel','nav','platformAdminMenuHost','platformAdminLinks','platformAdminToggle'])elements[id]=element();
  elements.platformAdminLinks.hidden=true;
  let hostHtml='';Object.defineProperty(elements.platformAdminMenuHost,'innerHTML',{get(){return hostHtml},set(value){hostHtml=value;elements.platformAdminLinks.hidden=true;elements.platformAdminToggle.attrs['aria-expanded']='false'}});
- const defaults={'/api/public/settings':{},'/api/auth/me':{user},'/api/admin/platform-summary':{companies:{active:2,total:3,inactive:1},users:{active:4,total:5},company_memberships:{active:3},platform_memberships:{active:2,total:2},recent_audit_30d:9},'/api/core/summary':{users:2,clients:3,active_trips:1}};
+ const defaults={'/api/public/settings':{},'/api/auth/me':{user},'/api/company/profile':{company:{id:10,legal_name:'Empresa A'},license:{plan_code:'Plan registrado'},usage:{registered_users:2,active_users:2,trucks:0}},'/api/admin/platform-summary':{companies:{active:2,total:3,inactive:1},users:{active:4,total:5},company_memberships:{active:3},platform_memberships:{active:2,total:2},recent_audit_30d:9},'/api/core/summary':{users:2,clients:3,active_trips:1}};
  const context={Auth:{user},document:{getElementById:id=>elements[id]||(elements[id]=element()),createElement:element,querySelectorAll:selector=>selector==='#nav button'?sidebar:[],querySelector:()=>null,addEventListener:(event,handler)=>events[event]=handler},stopControlDashboard(){stopped++},fetch:async(url,options={})=>{
   requests.push({url,options});const result=Object.hasOwn(responses,url)?responses[url]:defaults[url]??[];
   if(typeof result==='function')return result(url,options);
@@ -78,8 +78,8 @@ test('cada acceso superior abre el destino solicitado y mantiene título, selecc
 test('Mi empresa y Usuarios tienen acción y solo una opción activa al alternar',async()=>{
  const s=surface({user:company});await s.context.configuration();
  await s.context.adminTab('users');assert.equal((s.elements.app.innerHTML.match(/aria-current="page"/g)||[]).length,1);
- assert.equal(s.elements.title.textContent,'Mi empresa · Usuarios');
- await s.context.adminTab('overview');assert.equal(s.elements.title.textContent,'Mi empresa · Mi empresa');
+ assert.equal(s.elements.title.textContent,'Empresa A · Usuarios');
+ await s.context.adminTab('overview');assert.equal(s.elements.title.textContent,'Empresa A');
  assert.match(s.elements.app.innerHTML,/onclick="adminTab\('overview'\)"/);
  assert.equal(s.sidebar[0].classList.contains('active'),true);
  assert.equal(s.requests.some(request=>request.url.startsWith('/api/admin/')),false);
@@ -150,4 +150,56 @@ test('arranque sin argumento usa Auth.user para mostrar navegación autenticada'
  vm.runInContext(auth.slice(auth.lastIndexOf('const renderIdentityBase=renderActiveIdentity;')),s.context);
  s.context.renderActiveIdentity();assert.equal(s.elements.platformAdminMenuHost.hidden,false);
  s.context.Auth.user=company;s.context.renderActiveIdentity();assert.equal(s.sidebar[0].hidden,false);assert.equal(s.elements.platformAdminMenuHost.hidden,true);
+});
+
+test('nombre empresarial proviene de ficha propia aunque la identidad legacy indique otra empresa',async()=>{
+ const s=surface({user:{...company,company_name:'Empresa legacy B'}});await s.context.configuration();
+ assert.equal(s.elements.title.textContent,'Empresa A');assert.equal(s.elements.companyAdminHeading.textContent,'Empresa A');
+ assert.match(s.elements['admin-panel'].innerHTML,/<h3>Empresa A<\/h3>/);
+ assert.doesNotMatch(s.elements['admin-panel'].innerHTML,/Empresa legacy B|Mi empresa · Mi empresa/);
+});
+
+test('Datos y licencia muestra valores registrados de solo lectura sin acciones contractuales',async()=>{
+ const profile={company:{id:10,legal_name:'Empresa A',rut:'RUT registrado',trade_name:'Marca registrada',active:true},license:{plan_code:'plan_contratado_registrado',status:'trial',started_at:'2026-10-01',expires_at:null,user_limit:50,truck_limit:10,capabilities:{fleet:true,gps:false}},usage:{registered_users:4,active_users:3,trucks:2}};
+ const s=surface({user:company,responses:{'/api/company/profile':profile}});await s.context.configuration();await s.context.adminTab('company-profile');
+ const html=s.elements['admin-panel'].innerHTML;
+ for(const text of ['Empresa A','RUT registrado','plan_contratado_registrado','Prueba','01-10-2026','No registrado','Habilitado en el registro','Deshabilitado en el registro','Usuarios con acceso activo','Camiones registrados'])assert.ok(html.includes(text),text);
+ assert.equal(s.elements.title.textContent,'Empresa A · Datos y licencia');
+ assert.doesNotMatch(html,/<input|<form|<select|Guardar|Sin vencimiento|Ilimitad/);
+ assert.equal(s.requests.some(request=>request.options.method),false);
+ assert.equal(s.requests.some(request=>request.url==='/api/companies'),false);
+});
+
+test('faltantes contractuales no se sustituyen por planes, módulos o límites inventados',async()=>{
+ const s=surface({user:company,responses:{'/api/company/profile':{company:{id:10,legal_name:'Empresa A'},license:{},usage:{trucks:0,registered_users:0,active_users:0}}}});
+ await s.context.configuration();await s.context.adminTab('company-profile');const html=s.elements['admin-panel'].innerHTML;
+ assert.match(html,/N\/D/);assert.match(html,/No registrado/);assert.match(html,/No hay información de módulos registrada/);
+ assert.doesNotMatch(html,/standard|Ilimitad|Sin vencimiento/);assert.match(html,/<dd>0<\/dd>/);
+});
+
+test('sin dashboard.read los datos propios y Usuarios siguen accesibles y el resumen no inventa ceros',async()=>{
+ const s=surface({user:company,responses:{'/api/core/summary':{error:'Permiso requerido: dashboard.read'}}});await s.context.configuration();
+ assert.match(s.elements['admin-panel'].innerHTML,/Resumen operativo no disponible/);assert.match(s.elements['admin-panel'].innerHTML,/N\/D/);
+ assert.equal(s.elements.title.textContent,'Empresa A');await s.context.adminTab('users');assert.match(s.elements['admin-panel'].innerHTML,/Usuarios de mi empresa/);
+});
+
+test('perfil de otra empresa se rechaza y la consulta fallida ofrece reintentar',async()=>{
+ const s=surface({user:company,responses:{'/api/company/profile':{company:{id:20,legal_name:'Empresa B'},license:{},usage:{}}}});await s.context.configuration();
+ assert.match(s.elements['admin-panel'].innerHTML,/No se pudo verificar/);assert.match(s.elements['admin-panel'].innerHTML,/Reintentar/);
+ assert.doesNotMatch(s.elements['admin-panel'].innerHTML,/Empresa B/);
+});
+
+test('textos empresariales y claves de módulos se escapan al mostrar contrato',async()=>{
+ const s=surface({user:company,responses:{'/api/company/profile':{company:{id:10,legal_name:'Empresa <img onerror=ataque>',rut:'<script>rut</script>'},license:{plan_code:'<script>plan</script>',capabilities:{'<img onerror=ataque>':true}},usage:{}}}});
+ await s.context.configuration();await s.context.adminTab('company-profile');const html=s.elements['admin-panel'].innerHTML;
+ assert.doesNotMatch(html,/<script>|<img onerror/);assert.match(html,/&lt;script&gt;/);assert.match(html,/&lt;img/);
+});
+
+test('resumen empresarial tardío no sobrescribe Usuarios tras cambiar de pestaña',async()=>{
+ let release;
+ const s=surface({user:company,responses:{'/api/core/summary':()=>new Promise(resolve=>release=()=>resolve({ok:true,json:async()=>({users:2,clients:3,active_trips:1})}))}});
+ const pending=s.context.configuration();
+ while(!release)await new Promise(resolve=>setImmediate(resolve));
+ await s.context.adminTab('users');const html=s.elements['admin-panel'].innerHTML;
+ release();await pending;assert.equal(s.elements['admin-panel'].innerHTML,html);assert.equal(s.elements.title.textContent,'Empresa A · Usuarios');
 });

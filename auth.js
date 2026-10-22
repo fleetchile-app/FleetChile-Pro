@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const {writeAudit} = require('./audit');
 const {registerDriverUserAssignmentRoutes}=require('./driver-user-assignment');
+const {registerCompanyProfileRoutes}=require('./company-profile');
 
 const clean = v => typeof v === 'string' ? v.trim() : v;
 const hashPassword = password => new Promise((resolve,reject) => {
@@ -145,6 +146,7 @@ function registerAuthRoutes(app,pool){
     res.status(403).json({error:'Permiso de administración de usuarios requerido'});
   };
   const protectedUserRoutes = [authMiddleware.bind(null,pool), userManagement];
+  registerCompanyProfileRoutes(app,pool,{protectedUserRoutes,resolveActorContext});
   registerDriverUserAssignmentRoutes(app,pool,{protectedUserRoutes,resolveActorContext,userView});
   const membershipActor = (req,res,next) => {
     const c=resolveActorContext(req);

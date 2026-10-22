@@ -11,6 +11,7 @@ function surface({platform=false,memberId='12',memberActive=true,accountActive=t
  const context={Auth:{user},document:{getElementById:id=>elements[id]||(elements[id]=element()),createElement:element,querySelectorAll:()=>[]},alert:message=>alerts.push(message),confirm:message=>{confirmations.push(message);return confirm},fetch:async(url,options={})=>{
   requests.push({url,options});let data={};
   if(url==='/api/auth/me')data={user};
+  else if(url==='/api/company/profile')data={company:{id:10,legal_name:'Empresa A'},license:{plan_code:'Plan registrado'},usage:{registered_users:1,active_users:1,trucks:0}};
   else if(url==='/api/users')data=[row];
   else if(url==='/api/core/summary')data={users:1,clients:1,active_trips:0};
   else if(url.startsWith('/api/user-memberships/')&&options.method){

@@ -5,7 +5,7 @@
   btn.onclick=()=>window.configuration&&window.configuration();
 
   const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-  let adminIdentity=null,adminRevision=0,activeAdmin=null;
+  let adminIdentity=null,adminRevision=0,activeAdmin=null,companyProfile=null;
   const owner=u=>Boolean(u?.actor_type==='platform'&&u.ownership_role&&u.ownership_active!==false);
   const legacy=u=>Boolean(u?.actor_type==='legacy'&&u.role_code==='admin');
   const companyAdmin=u=>Boolean((u?.actor_type==='company'&&u.membership_id&&u.permissions?.includes('company.users.manage'))||legacy(u));
@@ -37,6 +37,7 @@
     toggle.setAttribute('aria-expanded',String(!links.hidden));
   };
   window.renderAdminNavigation=function(user){
+    if(String(user?.id||'')!==String(adminIdentity?.id||'')||String(user?.company_id||'')!==String(adminIdentity?.company_id||''))companyProfile=null;
     adminIdentity=user||null;btn.hidden=!companyAdmin(user);
     const host=document.getElementById('platformAdminMenuHost'),items=platformItems(user);
     if(!host)return;
@@ -48,7 +49,20 @@
     document.addEventListener('keydown',event=>{if(event.key==='Escape'&&document.getElementById('platformAdminLinks')?.hidden===false){window.togglePlatformAdminMenu(false);document.getElementById('platformAdminToggle')?.focus()}});
     document.addEventListener('click',event=>{const host=document.getElementById('platformAdminMenuHost');if(host&&!host.contains(event.target))window.togglePlatformAdminMenu(false)});
   }
-  function itemsForSurface(){return window.adminSurface==='platform'?platformItems():companyAdmin(adminIdentity)?[['overview','Mi empresa'],['users','Usuarios']]:[]}
+  function itemsForSurface(){return window.adminSurface==='platform'?platformItems():companyAdmin(adminIdentity)?[['overview','Resumen'],['users','Usuarios'],['company-profile','Datos y licencia']]:[]}
+  const companyLabel=()=>companyProfile?.company.legal_name||'Empresa autorizada';
+  function paintCompanyHeading(){
+    if(activeAdmin?.surface!=='company')return;
+    const tab=itemsForSurface().find(([key])=>key===activeAdmin.tab);
+    const title=document.getElementById('title'),heading=document.getElementById('companyAdminHeading');
+    if(title)title.textContent=companyLabel()+(activeAdmin.tab==='overview'?'':' · '+(tab?.[1]||''));
+    if(heading)heading.textContent=companyLabel();
+  }
+  async function loadCompanyProfile(){
+    const data=await get('company/profile');
+    if(!data?.company?.legal_name||String(data.company.id)!==String(adminIdentity?.company_id)||!data.license||!data.usage)throw Error('No se pudo verificar la empresa y su licencia');
+    companyProfile=data;paintCompanyHeading();return data;
+  }
   async function enterAdmin(surface,tab){
     window.stopControlDashboard?.();window.leaveAdminView();
     const revision=adminRevision;
@@ -73,21 +87,37 @@
     const revision=++adminRevision,platform=window.adminSurface==='platform';
     activeAdmin={surface:window.adminSurface,tab};window.renderAdminNavigation(adminIdentity);
     document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active',!platform&&b===btn));
-    const title=document.getElementById('title');title.textContent=(platform?'Plataforma · ':'Mi empresa · ')+selected[1];
+    const title=document.getElementById('title');title.textContent=platform?'Plataforma · '+selected[1]:companyLabel()+(tab==='overview'?'':' · '+selected[1]);
     const available=`<nav class="admin-tabs" aria-label="${platform?'Secciones de plataforma':'Administración de mi empresa'}">${items.map(([key,label])=>`<button class="${tab===key?'active':''}" ${tab===key?'aria-current="page"':''} onclick="adminTab('${key}')">${label}</button>`).join('')}</nav>`;
-    A.innerHTML=`<div class="admin-shell"><div class="admin-head"><div><small>${platform?'ADMINISTRACIÓN DE PLATAFORMA':'ADMINISTRACIÓN DE EMPRESA'}</small><h2>${platform?'Administración de Plataforma':'Administración de Empresa'}</h2><p>${platform?'Alcance global: estas opciones administran la plataforma, no solo la empresa seleccionada.':'Usuarios y memberships de la empresa autorizada.'}</p></div></div>${available}<div id="admin-panel"><div class="admin-loading" role="status">Cargando...</div></div></div>`;
+    A.innerHTML=`<div class="admin-shell"><div class="admin-head"><div><small>${platform?'ADMINISTRACIÓN DE PLATAFORMA':'ADMINISTRACIÓN DE EMPRESA'}</small><h2 ${platform?'':'id="companyAdminHeading"'}>${platform?'Administración de Plataforma':esc(companyLabel())}</h2><p>${platform?'Alcance global: estas opciones administran la plataforma, no solo la empresa seleccionada.':'Administración de la empresa autorizada. Los datos contractuales se consultan en Datos y licencia.'}</p></div></div>${available}<div id="admin-panel"><div class="admin-loading" role="status">Cargando...</div></div></div>`;
     title.focus?.({preventScroll:true});
-    try{const views={overview,organization,users,roles,owners,settings,audit};await views[tab]()}catch(error){if(revision===adminRevision){const panel=document.getElementById('admin-panel');if(panel)panel.innerHTML=`<div class="admin-error" role="alert">${esc(error.message)}<br><button class="secondary" onclick="adminTab('${tab}')">Reintentar</button></div>`}}
+    try{const views={overview,organization,users,roles,owners,settings,audit,'company-profile':companyProfileView};await views[tab]()}catch(error){if(revision===adminRevision){const panel=document.getElementById('admin-panel');if(panel)panel.innerHTML=`<div class="admin-error" role="alert">${esc(error.message)}<br><button class="secondary" onclick="adminTab('${tab}')">Reintentar</button></div>`}}
   };
   window.renderAdminNavigation(window.Auth?.user);
   async function overview(){
     if(window.adminSurface!=='platform'){
-      const [s,u]=await Promise.all([get('core/summary'),get('users')]);
-      document.getElementById('admin-panel').innerHTML=`<div class="admin-kpis"><div><small>Usuarios activos</small><b>${s.users}</b></div><div><small>Clientes</small><b>${s.clients}</b></div><div><small>Viajes activos</small><b>${s.active_trips}</b></div></div><section class="admin-card"><h3>Mi empresa</h3><p>Usuarios registrados: ${u.length}. La empresa se deriva de la membership activa.</p><button class="admin-link" onclick="adminTab('users')">Gestionar usuarios →</button></section>`;
+      const revision=adminRevision;
+      const [profile,summary]=await Promise.all([loadCompanyProfile(),get('core/summary').then(data=>({data}),error=>({error}))]);
+      if(revision!==adminRevision)return;
+      document.getElementById('admin-panel').innerHTML=`<div class="admin-kpis"><div><small>Usuarios activos en esta empresa</small><b>${profileValue(profile.usage.active_users)}</b></div><div><small>Clientes</small><b>${profileValue(summary.data?.clients)}</b></div><div><small>Viajes activos</small><b>${profileValue(summary.data?.active_trips)}</b></div></div>${summary.error?`<p class="admin-note" role="status">Resumen operativo no disponible: ${esc(summary.error.message)}. Los datos no disponibles se muestran como N/D.</p>`:''}<section class="admin-card"><h3>${esc(companyLabel())}</h3><p>${profileValue(profile.usage.registered_users)} usuarios vinculados a esta empresa. Plan registrado: ${profileValue(profile.license.plan_code)}.</p><button class="admin-link" onclick="adminTab('users')">Gestionar usuarios →</button><br><button class="admin-link" onclick="adminTab('company-profile')">Consultar datos de empresa y licencia →</button></section>`;
       return;
     }
     const s=await get('admin/platform-summary'),allowed=new Set(platformItems().map(([key])=>key));
     document.getElementById('admin-panel').innerHTML=`<div class="admin-kpis"><div><small>Empresas activas</small><b>${s.companies.active}/${s.companies.total}</b></div><div><small>Usuarios activos</small><b>${s.users.active}/${s.users.total}</b></div><div><small>Memberships empresa</small><b>${s.company_memberships.active}</b></div><div><small>Memberships plataforma</small><b>${s.platform_memberships.active}</b></div><div><small>Auditoría · 30 días</small><b>${s.recent_audit_30d}</b></div></div><div class="admin-grid">${allowed.has('organization')?`<section class="admin-card"><h3>Empresas y licencias</h3><p>${s.companies.total} empresas registradas · ${s.companies.inactive} inactivas. Plan, vigencia, límites y módulos por empresa.</p><button class="admin-link" onclick="adminTab('organization')">Administrar empresas y licencias →</button></section>`:''}${allowed.has('users')?`<section class="admin-card"><h3>Identidad y acceso</h3><p>${s.users.total} usuarios y ${s.platform_memberships.total} membresías de plataforma.</p><button class="admin-link" onclick="adminTab('users')">Administrar usuarios →</button></section>`:''}<section class="admin-card"><h3>Actividad gobernada</h3><p>${s.recent_audit_30d} eventos de auditoría en los últimos 30 días.</p><button class="admin-link" onclick="adminTab('audit')">Ver auditoría →</button></section></div>`;
+  }
+  function profileValue(value){return value===null||value===undefined||value===''?'N/D':esc(value)}
+  function profileDate(value){
+    if(!value)return 'No registrado';
+    const match=String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return match?`${match[3]}-${match[2]}-${match[1]}`:'Fecha no válida';
+  }
+  function profileFacts(fields){return `<dl class="company-facts">${fields.map(([label,value])=>`<div><dt>${label}</dt><dd>${profileValue(value)}</dd></div>`).join('')}</dl>`}
+  async function companyProfileView(){
+    const {company:c,license:l,usage:u}=await loadCompanyProfile();
+    const statuses={active:'Activa',trial:'Prueba',suspended:'Suspendida',expired:'Vencida'};
+    const modules=l.capabilities&&typeof l.capabilities==='object'&&!Array.isArray(l.capabilities)?Object.entries(l.capabilities):[];
+    const moduleLabels={fleet:'Flota',drivers:'Conductores',fuel:'Combustible',routes:'Rutas',loads:'Cargas',gps:'GPS',pod:'Entregas / POD',reports:'Reportes'};
+    document.getElementById('admin-panel').innerHTML=`<section class="admin-card"><h3>Datos de la empresa titular</h3><p>Información registrada por plataforma. Estos datos identifican a la empresa a la que está asignada la licencia y son de solo lectura.</p>${profileFacts([['Razón social',c.legal_name],['RUT',c.rut],['Nombre comercial',c.trade_name],['Correo registrado',c.email],['Teléfono',c.phone],['Dirección',c.address],['Comuna',c.commune],['Región',c.region],['Estado de empresa',c.active===true?'Activa':c.active===false?'Inactiva':null]])}</section><section class="admin-card"><h3>Licencia y capacidad registrada</h3><p>No modifica el contrato ni amplía los límites. Los datos mostrados provienen del registro de plataforma; no sustituyen el documento contractual.</p>${profileFacts([['Plan registrado',l.plan_code],['Estado de licencia',statuses[l.status]||l.status],['Inicio registrado',profileDate(l.started_at)],['Vencimiento registrado',profileDate(l.expires_at)],['Límite de usuarios',l.user_limit],['Usuarios con acceso activo',u.active_users],['Usuarios vinculados (incluye inactivos)',u.registered_users],['Límite de camiones',l.truck_limit],['Camiones registrados',u.trucks]])}</section><section class="admin-card"><h3>Módulos registrados en la licencia</h3><p>La disponibilidad de cada función también depende de los permisos del usuario.</p>${modules.length?profileFacts(modules.map(([key,value])=>[esc(moduleLabels[key]||key),value===true?'Habilitado en el registro':value===false?'Deshabilitado en el registro':'No informado'])):'<p>No hay información de módulos registrada.</p>'}</section>`;
   }
   async function owners(){const o=await get('admin/owners');document.getElementById('admin-panel').innerHTML=`<div class="admin-card"><div class="admin-section-head"><div><h3>Gobierno de propietarios</h3><p>Ownership separado de roles y memberships. Máximo: 2 principales y 2 backup.</p></div></div><div class="wrap"><table class="table"><thead><tr><th>Slot</th><th>Tipo</th><th>Identidad</th><th>Estado</th><th>Incorporación</th><th></th></tr></thead><tbody>${o.map(x=>`<tr><td>${x.slot}</td><td>${x.owner_type==='primary'?'Principal':'Backup'}</td><td><b>${esc(x.name)}</b><small>${esc(x.email)}</small></td><td><span class="admin-status ${x.active?'on':'off'}">${x.active?'Activo':'Inactivo'}</span></td><td>${new Date(x.created_at).toLocaleString('es-CL')}</td><td><button class="smallbtn" onclick="toggleOwner(${x.slot},${!x.active})">${x.active?'Desactivar':'Activar'}</button><button class="smallbtn" onclick="removeOwner(${x.slot})">Retirar</button></td></tr>`).join('')||'<tr><td colspan="6">No hay propietarios registrados.</td></tr>'}</tbody></table></div><p class="admin-note">La incorporación de un propietario requiere un usuario con membership de plataforma activa y no se habilita desde una cuenta administradora delegada.</p></div>`}
   window.toggleOwner=async(slot,active)=>{if(!confirm(active?'¿Activar propietario?':'¿Desactivar propietario?'))return;try{await patch('admin/owners/'+slot,{active});owners()}catch(e){alert(e.message)}};
