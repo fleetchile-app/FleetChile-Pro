@@ -19,6 +19,14 @@ async function detail(user,id){const a=app();registerOperationsRoutes(a,pool());
 
 test('Driver A obtiene solo su viaje y excluye otro driver, otra empresa y driver NULL',async()=>{const res=await list(driverA,{driver_id:6,company_id:20});assert.equal(res.statusCode,200);assert.deepEqual(res.payload.map(t=>t.id),[101])});
 test('Driver B obtiene su viaje de Empresa B',async()=>{const res=await list(driverB);assert.deepEqual(res.payload.map(t=>t.id),[201])});
+
+test('listado incluye camión asignado para conservar seguimiento GPS y mantiene scope de sesión',async()=>{
+ const calls=[],db={async query(sql,values){calls.push({sql,values});return {rows:[{id:101,truck_id:31,status:'En tránsito'}],rowCount:1}}};
+ const a=app();registerOperationsRoutes(a,db);
+ const res=await invoke(a.route('get','/api/driver/trips'),{user:driverA,query:{company_id:20,driver_id:6}},db);
+ assert.match(calls[0].sql,/select t\.id,t\.truck_id,t\.trip_number/);
+ assert.deepEqual(calls[0].values,[10,4]);assert.equal(res.payload[0].truck_id,31);
+});
 test('Driver A no obtiene viajes de Driver B ni de Empresa B',async()=>{assert.equal((await detail(driverA,102)).statusCode,404);assert.equal((await detail(driverA,201)).statusCode,404)});
 test('Driver B no obtiene viaje de Empresa A',async()=>{assert.equal((await detail(driverB,101)).statusCode,404)});
 test('driver sin asociación, usuario no driver y admin reciben 403',async()=>{for(const user of [{role_code:'driver',company_id:10,driver_id:null},{role_code:'viewer',company_id:10,driver_id:null},{role_code:'admin',company_id:null,driver_id:null}])assert.equal((await list(user)).statusCode,403)});

@@ -82,3 +82,80 @@
   .driver-header .driver-account{flex:1 1 100%;width:100%}
   .driver-header .driver-account-panel{width:100%}
 }
+
+/* Persistent trip location panel; remains in document flow on list and detail. */
+.driver-location-panel{
+  position:static;
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  gap:12px;
+  min-width:0;
+  max-width:100%;
+  overflow-wrap:anywhere;
+}
+.driver-location-panel>h2{margin:0;font-size:20px;line-height:1.35}
+.driver-location-panel>p{min-width:0;margin:0;line-height:1.5}
+.driver-location-panel [data-gps-summary]{
+  padding:10px 12px;
+  border-left:4px solid #60758a;
+  border-radius:6px;
+  background:#f4f8fb;
+  color:#173b5d;
+  font-weight:700;
+}
+.driver-location-panel.is-active [data-gps-summary],
+.driver-location-panel [data-gps-summary].is-active{
+  border-color:#087443;
+  background:#e0f3e8;
+  color:#087443;
+}
+.driver-location-panel.is-error [data-gps-summary],
+.driver-location-panel [data-gps-summary].is-error{
+  border-color:#b83232;
+  background:#fff5f5;
+  color:#b83232;
+}
+.driver-location-panel.is-paused [data-gps-summary],
+.driver-location-panel [data-gps-summary].is-paused{
+  border-color:#60758a;
+  background:#f4f8fb;
+  color:#40566d;
+}
+.driver-location-panel.is-sending [data-gps-summary],
+.driver-location-panel [data-gps-summary].is-sending{
+  border-color:#0f67a9;
+  background:#e7f0fa;
+  color:#0b578f;
+}
+.driver-location-panel [data-gps-identity]{color:#173b5d;font-weight:600}
+.driver-location-panel [data-gps-last]{color:#40566d;font-size:14px}
+.driver-location-panel .driver-gps-help{color:#40566d;font-size:14px}
+.driver-location-panel .driver-gps-controls{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:12px;
+  min-width:0;
+}
+.driver-location-panel .driver-gps-controls>button{
+  width:100%;
+  min-width:44px;
+  min-height:44px;
+  padding:12px;
+  border:1px solid transparent;
+  border-radius:8px;
+  font:inherit;
+  font-weight:700;
+  line-height:1.4;
+  white-space:normal;
+  overflow-wrap:anywhere;
+  cursor:pointer;
+}
+.driver-location-panel .driver-gps-controls>.driver-link{border-color:#ccd9e5;background:#fff;color:#0b578f}
+.driver-location-panel .driver-gps-controls>.driver-button:hover:not(:disabled){background:#0b578f}
+.driver-location-panel .driver-gps-controls>.driver-link:hover:not(:disabled){background:#e7f0fa}
+.driver-location-panel .driver-gps-controls>button:focus-visible{outline:3px solid #0f67a9;outline-offset:3px}
+.driver-location-panel .driver-gps-controls>button:disabled{background:#f4f8fb;color:#60758a;border-color:#ccd9e5;cursor:default}
+.driver-location-panel[hidden],.driver-location-panel [hidden]{display:none!important}
+@media(max-width:480px){
+  .driver-location-panel .driver-gps-controls{grid-template-columns:minmax(0,1fr)}
+}

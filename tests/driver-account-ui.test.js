@@ -94,15 +94,16 @@ test('logout de red fallido cierra localmente sin afirmar revocación remota',as
 test('salida con petición pendiente oculta datos, detiene GPS, bloquea doble salida y tiene timeout',async()=>{
  const s=surface({fetcher:async(url,options)=>{
   if(url==='/api/auth/logout')return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(Error('aborted'))));
+  if(url==='/api/driver/trips/9')return {ok:true,status:200,json:async()=>({id:9,truck_id:31,status:'En tránsito'})};
   return {ok:true,status:200,json:async()=>[]};
  }});
  await s.sandbox.driverBoot({authenticated:true});
  const logout=s.root.querySelector('[data-driver-logout]').onclick;
  s.root.innerHTML+='<div class="driver-gps"></div>';
- s.sandbox.driverTest.startGps({id:9,status:'En tránsito'});
+ await s.sandbox.driverTest.startGps({id:9,truck_id:31,status:'En tránsito'});
  const pending=logout();assert.match(s.root.innerHTML,/Cerrando sesión/);assert.deepEqual(s.cleared,[7]);
  await logout();assert.equal(s.calls.filter(call=>call.url==='/api/auth/logout').length,1);
- s.timers[0].callback();await pending;assert.equal(s.sandbox.Auth.token,'');
+ s.timers.find(timer=>timer.ms===8000).callback();await pending;assert.equal(s.sandbox.Auth.token,'');
 });
 
 test('respuesta de viajes pendiente no restaura información después de salir',async()=>{

@@ -3,6 +3,9 @@
  const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
  const date=v=>v?new Date(v).toLocaleString('es-CL'):'No informado';
  let gpsWatch=null,gpsTripId=null,gpsLastSent=0,gpsGeneration=0,sessionVersion=0,viewVersion=0,signingOut=false;
+ let gpsTrip=null,gpsConsent=false,gpsTimer=null,gpsPermission=null,gpsNeedsReview=false;
+ const gpsRequests=new Set();
+ let gpsMessage='Abre un viaje En tránsito o Detenido para activar la ubicación.',gpsMode='paused',gpsConfirmed=null;
  const status=v=>`<span class="driver-status">${esc(v||'Sin estado')}</span>`;
  function expireSession(){
   stopGps();sessionVersion++;viewVersion++;Auth.token='';Auth.user=null;
@@ -24,7 +27,8 @@
  }
  function leaveForm(){return !root.querySelector('.driver-delivery-form')||confirm('Hay una entrega abierta. Los datos sin guardar se perderán. ¿Continuar?')}
  function authenticatedScreen(content){
-  root.innerHTML=`<section class="driver-shell">${accountHeader()}${content}</section>`;
+  root.innerHTML=`<section class="driver-shell">${accountHeader()}${Auth.user?.role_code==='driver'&&Auth.user.driver_id&&!Auth.user.must_change_password?gpsPanel():''}${content}</section>`;
+  renderGps();
   root.querySelector('[data-driver-logout]').onclick=logoutDriver;
   root.querySelector('[data-driver-password]').onclick=()=>{if(leaveForm())changePassword()};
   for(const selector of ['[data-driver-home]','[data-driver-refresh]']){
@@ -70,8 +74,144 @@
  }
  function login(error='',notice=false){root.innerHTML=`<section class="driver-shell"><div class="driver-card"><div class="driver-brand">FleetChile · Conductor</div><h1>Iniciar sesión</h1>${error?`<p class="${notice?'driver-success':'driver-error'}" role="${notice?'status':'alert'}">${esc(error)}</p>`:''}<form class="driver-login" id="driverLogin"><label>Correo<input name="email" type="email" autocomplete="username" required></label><label>Contraseña<input name="password" type="password" autocomplete="current-password" required></label><button class="driver-button">Ingresar</button></form></div></section>`;root.querySelector('form').onsubmit=async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.target));try{await Auth.login(data.email,data.password);window.driverBoot({authenticated:true})}catch(error){login(error.message)}}}
  async function changeStatus(id,button){const version=sessionVersion,view=viewVersion;button.disabled=true;try{await api(`/api/driver/trips/${encodeURIComponent(id)}/status`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:button.dataset.status})});if(version===sessionVersion&&view===viewVersion)await loadDetail(id)}catch(error){const box=root.querySelector('.driver-actions');box?.insertAdjacentHTML('beforeend',`<p class="driver-error">${esc(error.message)}</p>`)}finally{button.disabled=false}}
- function stopGps(){gpsGeneration++;if(gpsWatch!==null&&navigator.geolocation)navigator.geolocation.clearWatch(gpsWatch);gpsWatch=null;gpsTripId=null}
- function startGps(trip){const box=root.querySelector('.driver-gps');if(!['En tránsito','Detenido'].includes(trip.status)){stopGps();box.innerHTML='<h3>GPS</h3><p>Captura no activa para este estado.</p>';return}if(!navigator.geolocation){box.innerHTML='<h3>GPS</h3><p class="driver-error">Este navegador no soporta geolocalización.</p>';return}if(gpsWatch!==null&&gpsTripId===trip.id)return;stopGps();const generation=++gpsGeneration;gpsTripId=trip.id;box.innerHTML='<h3>GPS</h3><p>Solicitando posición…</p>';gpsWatch=navigator.geolocation.watchPosition(async position=>{if(generation!==gpsGeneration||gpsTripId!==trip.id||!['En tránsito','Detenido'].includes(trip.status))return;const now=Date.now();if(now-gpsLastSent<10000)return;gpsLastSent=now;if(generation!==gpsGeneration||gpsTripId!==trip.id)return;try{const sent=await api(`/api/driver/trips/${encodeURIComponent(trip.id)}/positions`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lat:position.coords.latitude,lng:position.coords.longitude,speed_kmh:position.coords.speed===null?0:position.coords.speed*3.6,recorded_at:new Date(position.timestamp).toISOString()})});if(generation!==gpsGeneration||gpsTripId!==trip.id)return;box.innerHTML=`<h3>GPS</h3><p class="driver-gps-active">Captura activa · última posición ${date(sent.recorded_at)}</p>`}catch(error){if(generation!==gpsGeneration||gpsTripId!==trip.id)return;box.innerHTML=`<h3>GPS</h3><p class="driver-error">Sin conexión: ${esc(error.message)}</p>`}},error=>{if(generation!==gpsGeneration||gpsTripId!==trip.id)return;box.innerHTML=`<h3>GPS</h3><p class="driver-error">${esc(error.code===1?'Permiso de ubicación denegado':error.code===2?'Posición no disponible':'Tiempo de espera agotado')}</p>`},{enableHighAccuracy:true,maximumAge:10000,timeout:15000})}
+ function gpsEligible(trip){return Boolean(trip?.truck_id)&&['En tránsito','Detenido'].includes(trip.status)}
+ function gpsPanel(){
+  return '<section class="driver-card driver-location-panel" aria-label="Ubicación del viaje"><h2>Ubicación del viaje</h2><p data-gps-summary role="status" aria-live="polite" tabindex="-1"></p><p data-gps-identity></p><p data-gps-last></p><p class="driver-gps-help">La ubicación de este teléfono se enviará para el viaje indicado mientras uses FleetChile. Se pausa al cambiar de app o bloquear la pantalla. Al volver se comprueban sesión y viaje antes de reanudar. Si está bloqueada, revisa Ubicación en los permisos de FleetChile o del sitio en el navegador y activa la ubicación de Android.</p><div class="driver-gps-controls"><button type="button" class="driver-button" data-gps-start>Activar ubicación</button><button type="button" class="driver-link" data-gps-stop>Detener ubicación</button></div></section>';
+ }
+ function renderGps(){
+  const panel=root.querySelector('.driver-location-panel');if(!panel)return;
+  panel.className='driver-card driver-location-panel is-'+gpsMode;
+  panel.querySelector('[data-gps-summary]').textContent=gpsMessage;
+  panel.querySelector('[data-gps-identity]').textContent=gpsTrip?[(Auth.user?.name||'Conductor'),gpsTrip.trip_number||'Viaje #'+gpsTrip.id,gpsTrip.patente||'Camión asignado'].join(' · '):'Sin viaje seleccionado para compartir ubicación.';
+  panel.querySelector('[data-gps-last]').textContent=gpsConfirmed?'Última posición confirmada para este viaje: '+date(gpsConfirmed):'Todavía no hay una posición confirmada para este viaje.';
+  const start=panel.querySelector('[data-gps-start]'),stop=panel.querySelector('[data-gps-stop]');
+  start.hidden=gpsConsent;start.disabled=!gpsEligible(gpsTrip)||signingOut||gpsNeedsReview;
+  start.textContent=gpsMode==='error'?'Reintentar ubicación':'Activar ubicación';
+  start.onclick=()=>{const pending=startGps(gpsTrip);panel.querySelector('[data-gps-summary]').focus();return pending};
+  stop.hidden=!gpsConsent;stop.onclick=()=>{stopGps('Ubicación detenida por el conductor.');start.focus()};
+ }
+ function stopGps(message='Ubicación detenida.',preserveConsent=false){
+  gpsGeneration++;
+  if(gpsWatch!==null&&navigator.geolocation)navigator.geolocation.clearWatch(gpsWatch);
+  gpsWatch=null;gpsTripId=null;gpsLastSent=0;
+  if(gpsTimer!==null)clearTimeout(gpsTimer);gpsTimer=null;
+  for(const controller of gpsRequests)controller.abort();gpsRequests.clear();
+  if(gpsPermission)gpsPermission.onchange=null;gpsPermission=null;
+  if(!preserveConsent)gpsConsent=false;
+  gpsMessage=message;gpsMode='paused';renderGps();
+ }
+ function prepareGps(trip){
+  if(gpsConsent&&String(gpsTrip?.id)!==String(trip.id))return renderGps();
+  const changed=String(gpsTrip?.id)!==String(trip.id)||String(gpsTrip?.truck_id)!==String(trip.truck_id)||gpsTrip?.status!==trip.status;
+  if(gpsConsent&&(!gpsEligible(trip)||String(gpsTrip.truck_id)!==String(trip.truck_id)))stopGps('El estado o camión del viaje cambió. Revisa la asignación antes de activar ubicación.');
+  gpsTrip=trip;gpsNeedsReview=false;
+  if(changed)gpsConfirmed=null;
+  if(!gpsConsent&&(changed||gpsMode!=='error')){gpsMessage=gpsEligible(trip)?'Ubicación desactivada. Pulsa Activar ubicación para este viaje.':'La ubicación solo se activa con camión asignado y viaje En tránsito o Detenido.';gpsMode='paused'}
+  renderGps();
+ }
+ function gpsFailure(error,generation){
+  if(generation!==gpsGeneration)return;
+  const message=error.status===403?'No tienes autorización para registrar ubicación. Solicita revisión a administración.':
+   error.status===404?'El viaje ya no está disponible o fue reasignado. Selecciona tu viaje vigente.':
+   error.status===409?'El viaje cambió de estado o ya no tiene camión. Revisa su asignación.':
+   error.status?'El servidor rechazó la posición (HTTP '+error.status+'). Reintenta o solicita revisión.':
+   error.name==='AbortError'?'El servidor no respondió a tiempo. Reintenta cuando tengas conexión.':
+   'No se pudo comunicar con el servidor. Comprueba tu conexión y reintenta.';
+  stopGps(message);gpsNeedsReview=[403,404,409].includes(error.status);gpsMode='error';
+  if(gpsNeedsReview)gpsMessage+=' Actualiza y abre el viaje vigente antes de activar ubicación.';
+  renderGps();
+ }
+ async function gpsRead(path){
+  const controller=new AbortController();gpsRequests.add(controller);
+  const timeout=setTimeout(()=>controller.abort(),15000);
+  try{return await api(path,{signal:controller.signal})}
+  finally{clearTimeout(timeout);gpsRequests.delete(controller)}
+ }
+ async function gpsValidate(trip,generation,checkIdentity=false){
+  if(checkIdentity){
+   const identity=await gpsRead('/api/auth/me');
+   if(generation!==gpsGeneration)return null;
+   const user=identity.user;
+   if(user?.role_code!=='driver'||!user.driver_id||user.must_change_password||
+      String(user.id)!==String(Auth.user?.id)||String(user.company_id)!==String(Auth.user?.company_id)||String(user.driver_id)!==String(Auth.user?.driver_id)){
+    stopGps('La identidad o asociación de conductor cambió. Cierra sesión e ingresa nuevamente.');gpsNeedsReview=true;renderGps();return null;
+   }
+  }
+  const current=await gpsRead('/api/driver/trips/'+encodeURIComponent(trip.id));
+  if(generation!==gpsGeneration)return null;
+  if(String(current.id)!==String(trip.id)||!gpsEligible(current)||String(current.truck_id)!==String(trip.truck_id)){
+   stopGps('El viaje terminó, cambió de estado o de camión. Actualiza y abre el viaje vigente antes de activar ubicación.');gpsNeedsReview=true;renderGps();return null;
+  }
+  gpsTrip=current;return current;
+ }
+ function scheduleGpsValidation(trip,generation){
+  gpsTimer=setTimeout(async()=>{
+   gpsTimer=null;if(generation!==gpsGeneration||!gpsConsent)return;
+   try{const current=await gpsValidate(trip,generation);if(current&&generation===gpsGeneration)scheduleGpsValidation(current,generation)}
+   catch(error){gpsFailure(error,generation)}
+  },30000);
+ }
+ async function startGps(trip,resume=false){
+  if(!trip||signingOut||gpsNeedsReview)return;
+  if(gpsConsent&&!resume)return;
+  stopGps('Comprobando ubicación y asignación…');gpsTrip=trip;
+  if(!gpsEligible(trip)){gpsMessage='El viaje debe estar En tránsito o Detenido y tener camión asignado.';return renderGps()}
+  if(window.isSecureContext===false){gpsMode='error';gpsMessage='Abre FleetChile desde su dirección HTTPS para usar ubicación.';return renderGps()}
+  if(!navigator.geolocation){gpsMode='error';gpsMessage='Este navegador no ofrece ubicación. Revisa que uses un navegador compatible en Android.';return renderGps()}
+  gpsConsent=true;gpsMode='sending';renderGps();
+  const generation=gpsGeneration;
+  try{
+   if(navigator.permissions?.query){
+    let permission=null;try{permission=await navigator.permissions.query({name:'geolocation'})}catch{}
+    if(generation!==gpsGeneration)return;
+    gpsPermission=permission;
+    if(gpsPermission?.state==='denied'){stopGps('Ubicación bloqueada. Habilítala en los permisos de FleetChile o del sitio en tu navegador y pulsa Reintentar.');gpsMode='error';return renderGps()}
+   }
+   const current=await gpsValidate(trip,generation,resume);
+   if(!current||generation!==gpsGeneration)return;
+   if(document.hidden){stopGps('Ubicación pausada: vuelve a FleetChile para revalidar y reanudar.',true);return}
+   gpsTripId=trip.id;gpsMessage='Solicitando permiso o primera posición…';renderGps();
+   if(gpsPermission)gpsPermission.onchange=()=>{if(generation===gpsGeneration&&gpsPermission?.state==='denied'){stopGps('El permiso de ubicación fue retirado. Habilítalo y reintenta.');gpsMode='error';renderGps()}};
+   let sending=false;
+   gpsWatch=navigator.geolocation.watchPosition(async position=>{
+    if(generation!==gpsGeneration||gpsTripId!==trip.id||!gpsConsent||document.hidden||sending)return;
+    const now=Date.now();if(gpsLastSent&&now-gpsLastSent<10000)return;
+    if(!Number.isFinite(position.coords.latitude)||!Number.isFinite(position.coords.longitude)||!Number.isFinite(position.timestamp))return;
+    gpsLastSent=now;sending=true;gpsMode='sending';gpsMessage='Enviando posición…';renderGps();
+    const controller=new AbortController();gpsRequests.add(controller);
+    const timeout=setTimeout(()=>controller.abort(),15000);
+    try{
+     const sent=await api('/api/driver/trips/'+encodeURIComponent(trip.id)+'/positions',{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify({lat:position.coords.latitude,lng:position.coords.longitude,speed_kmh:position.coords.speed==null?0:Math.max(0,position.coords.speed*3.6),recorded_at:new Date(position.timestamp).toISOString()})});
+     if(generation!==gpsGeneration||gpsTripId!==trip.id)return;
+     gpsConfirmed=sent.recorded_at;gpsMode='active';gpsMessage='Ubicación activa · posición recibida por FleetChile.';renderGps();
+    }catch(error){gpsFailure(error,generation)}
+    finally{clearTimeout(timeout);gpsRequests.delete(controller);sending=false}
+   },error=>{
+    if(generation!==gpsGeneration)return;
+    const message=error.code===1?'Permiso de ubicación denegado. Habilítalo en Android y en los permisos del sitio; luego reintenta.':
+     error.code===2?'No se pudo obtener la posición. Comprueba ubicación de Android y señal; luego reintenta.':
+     'Se agotó el tiempo para obtener ubicación. Comprueba la señal y reintenta.';
+    stopGps(message);gpsMode='error';renderGps();
+   },{enableHighAccuracy:true,maximumAge:10000,timeout:15000});
+   // Some providers may invoke an error synchronously before returning the watch id.
+   if(generation!==gpsGeneration){navigator.geolocation.clearWatch(gpsWatch);gpsWatch=null;return}
+   scheduleGpsValidation(current,generation);
+  }catch(error){gpsFailure(error,generation)}
+ }
+ function pauseGps(){
+  if(gpsConsent)stopGps('Ubicación pausada al salir de la app. Se revalidará al volver a FleetChile.',true);
+ }
+ function resumeGps(){if(gpsConsent&&gpsTrip&&gpsWatch===null&&!document.hidden&&!signingOut)return startGps(gpsTrip,true)}
+ document.addEventListener?.('visibilitychange',()=>{if(document.hidden)pauseGps();else resumeGps()});
+ window.addEventListener?.('pagehide',pauseGps);
+ window.addEventListener?.('pageshow',resumeGps);
+ window.addEventListener?.('online',resumeGps);
+ window.addEventListener?.('storage',event=>{
+  if(event.key==='fleet_token'&&event.newValue!==Auth.token){
+   stopGps('La sesión cambió en otra ventana.');sessionVersion++;viewVersion++;Auth.token='';Auth.user=null;
+   login('La sesión cambió en otra ventana. Inicia sesión para continuar.');
+  }
+ });
  async function loadChecklist(id){const box=root.querySelector('.driver-checklist');try{const data=await api(`/api/driver/trips/${encodeURIComponent(id)}/checklist`);const current=data.checklists?.[0];box.innerHTML=`<h3>Checklist preoperacional</h3>${current?`<p>${status(current.status)} ${current.status==='Rechazado'?'<span class="driver-error">Incidencia generada para gestión operacional.</span>':''}</p><textarea class="driver-checklist-items" ${current.status!=='Pendiente'?'disabled':''}>${esc(JSON.stringify(current.items||[],null,2))}</textarea><textarea class="driver-checklist-notes" placeholder="Observaciones" ${current.status!=='Pendiente'?'disabled':''}>${esc(current.observations||'')}</textarea>${current.status==='Pendiente'?'<button class="driver-button" data-check-action="Aprobado">Cerrar aprobado</button><button class="driver-button driver-reject" data-check-action="Rechazado">Cerrar rechazado</button>':''}`:'<p>No hay checklist registrado.</p><button class="driver-button" id="startChecklist">Iniciar checklist</button>'}`;root.querySelector('#startChecklist')?.addEventListener('click',async()=>{try{await api(`/api/driver/trips/${encodeURIComponent(id)}/checklist`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:[]})});await loadChecklist(id)}catch(e){box.insertAdjacentHTML('beforeend',`<p class="driver-error">${esc(e.message)}</p>`)}});root.querySelectorAll('[data-check-action]').forEach(button=>button.addEventListener('click',async()=>{button.disabled=true;try{const items=JSON.parse(root.querySelector('.driver-checklist-items').value||'[]');await api(`/api/driver/checklists/${encodeURIComponent(current.id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:button.dataset.checkAction,items,observations:root.querySelector('.driver-checklist-notes').value})});await loadChecklist(id)}catch(e){box.insertAdjacentHTML('beforeend',`<p class="driver-error">${esc(e.message)}</p>`);button.disabled=false}}))}catch(e){box.innerHTML=`<p class="driver-error">${esc(e.message)}</p>`}}
  function signatureCanvas(){const canvas=document.createElement('canvas');canvas.width=900;canvas.height=360;canvas.className='driver-signature-canvas';const ctx=canvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.strokeStyle='#173b5d';ctx.lineWidth=4;ctx.lineCap='round';let drawing=false,empty=true;const point=e=>{const r=canvas.getBoundingClientRect();return{x:(e.clientX-r.left)*canvas.width/r.width,y:(e.clientY-r.top)*canvas.height/r.height}};canvas.addEventListener('pointerdown',e=>{drawing=true;empty=false;canvas.setPointerCapture(e.pointerId);const p=point(e);ctx.beginPath();ctx.moveTo(p.x,p.y)});canvas.addEventListener('pointermove',e=>{if(!drawing)return;const p=point(e);ctx.lineTo(p.x,p.y);ctx.stroke()});canvas.addEventListener('pointerup',()=>{drawing=false});canvas.addEventListener('pointercancel',()=>{drawing=false});canvas.clear=()=>{ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.strokeStyle='#173b5d';empty=true};canvas.value=()=>empty?'':canvas.toDataURL('image/png');return canvas}
  const pendingDeliverySubmissions=new Map();
@@ -157,7 +297,7 @@
  async function loadDeliveries(tripId){const detail=root.querySelector('.driver-detail');if(!detail)return;let box=detail.querySelector('.driver-deliveries');if(!box){box=document.createElement('div');box.className='driver-card driver-deliveries';detail.append(box)}box.innerHTML='<h3>Entregas</h3><p>Cargando cargas…</p>';try{const data=await api(`/api/driver/trips/${encodeURIComponent(tripId)}/deliveries`);box.innerHTML=`<h3>Entregas</h3>${data.deliveries?.length?data.deliveries.map(load=>`<div class="driver-delivery-row"><div><b>${esc(load.cargo)}</b><span>${esc(load.status)}</span></div>${load.status==='Entregada'?'<span class="driver-success">Completada</span>':'<button class="driver-button delivery-start">Entregar</button>'}</div>`).join(''):'<p>No hay cargas registradas.</p>'}`;const rows=[...box.querySelectorAll('.driver-delivery-row')];data.deliveries?.forEach((load,index)=>rows[index]?.querySelector('.delivery-start')?.addEventListener('click',()=>{const old=box.querySelector('.driver-delivery-form');old?.remove();box.append(deliveryForm(tripId,load))}))}catch(e){box.innerHTML=`<h3>Entregas</h3><p class="driver-error">${esc(e.message)}</p>`}}
  const _driverLoadChecklist=loadChecklist;loadChecklist=async id=>{const version=sessionVersion,view=viewVersion;await _driverLoadChecklist(id);if(version===sessionVersion&&view===viewVersion)await loadDeliveries(id)};
  function renderActions(allowed=[]){return `<div class="driver-actions">${allowed.map(s=>`<button class="driver-button driver-status-action" data-status="${esc(s)}">${esc(s)}</button>`).join('')}</div>`}
- function renderDetail(trip,allowed){root.querySelector('.driver-detail').innerHTML=`<button class="driver-link" id="backTrips">← Volver a viajes</button><div class="driver-card"><h2>${esc(trip.trip_number)}</h2>${status(trip.status)}${renderActions(allowed)}<div class="driver-meta"><div><small>Origen</small><b>${esc(trip.origin)}</b></div><div><small>Destino</small><b>${esc(trip.destination)}</b></div><div><small>Salida</small><b>${date(trip.planned_departure)}</b></div><div><small>Camión</small><b>${esc(trip.patente||'No asignado')}</b></div><div><small>Cliente</small><b>${esc(trip.client_name||'No informado')}</b></div><div><small>Ruta</small><b>${esc(trip.route_origin||trip.origin)} → ${esc(trip.route_destination||trip.destination)}</b></div></div><h3>Cargas</h3>${trip.loads?.length?`<ul class="driver-list">${trip.loads.map(load=>`<li><b>${esc(load.cargo)}</b><span>${esc(load.status)} · ${esc(load.weight_kg)} kg</span></li>`).join('')}</ul>`:'<p>No hay cargas registradas.</p>'}</div><div class="driver-card driver-gps"></div><div class="driver-card driver-checklist"><p>Cargando checklist…</p></div>`;root.querySelector('#backTrips').onclick=()=>{stopGps();loadTrips()};root.querySelectorAll('.driver-status-action').forEach(button=>button.onclick=()=>changeStatus(trip.id,button));startGps(trip);loadChecklist(trip.id)}
+ function renderDetail(trip,allowed){root.querySelector('.driver-detail').innerHTML=`<button class="driver-link" id="backTrips">← Volver a viajes</button><div class="driver-card"><h2>${esc(trip.trip_number)}</h2>${status(trip.status)}${renderActions(allowed)}<div class="driver-meta"><div><small>Origen</small><b>${esc(trip.origin)}</b></div><div><small>Destino</small><b>${esc(trip.destination)}</b></div><div><small>Salida</small><b>${date(trip.planned_departure)}</b></div><div><small>Camión</small><b>${esc(trip.patente||'No asignado')}</b></div><div><small>Cliente</small><b>${esc(trip.client_name||'No informado')}</b></div><div><small>Ruta</small><b>${esc(trip.route_origin||trip.origin)} → ${esc(trip.route_destination||trip.destination)}</b></div></div><h3>Cargas</h3>${trip.loads?.length?`<ul class="driver-list">${trip.loads.map(load=>`<li><b>${esc(load.cargo)}</b><span>${esc(load.status)} · ${esc(load.weight_kg)} kg</span></li>`).join('')}</ul>`:'<p>No hay cargas registradas.</p>'}</div><div class="driver-card driver-checklist"><p>Cargando checklist…</p></div>`;root.querySelector('#backTrips').onclick=()=>{if(leaveForm())loadTrips()};root.querySelectorAll('.driver-status-action').forEach(button=>button.onclick=()=>changeStatus(trip.id,button));prepareGps(trip);loadChecklist(trip.id)}
  async function loadDetail(id){
   const view=++viewVersion,version=sessionVersion,box=root.querySelector('.driver-detail');
   if(!box||signingOut)return;
@@ -171,18 +311,22 @@
  }
  async function loadTrips(){
   if(signingOut)return;
-  stopGps();const view=++viewVersion,version=sessionVersion;
+  const view=++viewVersion,version=sessionVersion;
   authenticatedScreen('<div class="driver-card"><small>Conductor</small><h1>'+esc(Auth.user.name)+'</h1><p>'+esc(Auth.user.company_name||'Empresa no identificada')+'</p></div><div class="driver-detail"><div class="driver-card"><h2>Mis viajes</h2><p>Cargando viajes asignados…</p></div></div>');
   const list=root.querySelector('.driver-detail');
   try{
    const trips=await api('/api/driver/trips');
    if(version!==sessionVersion||view!==viewVersion)return;
+   if(gpsConsent&&gpsTrip){
+    const current=trips.find(trip=>String(trip.id)===String(gpsTrip.id));
+    if(!current||!gpsEligible(current)||String(current.truck_id)!==String(gpsTrip.truck_id))stopGps('El viaje ya no está disponible para este seguimiento. Revisa su estado o asignación.');
+   }
    list.innerHTML=`<div class="driver-card"><h2>Mis viajes</h2>${trips.length?`<ul class="driver-list">${trips.map(t=>`<li><button class="driver-trip" data-id="${esc(t.id)}"><b>${esc(t.trip_number)}</b>${status(t.status)}<span>${esc(t.origin)} → ${esc(t.destination)}</span><small>${date(t.planned_departure)}</small></button></li>`).join('')}</ul>`:'<p>No tienes viajes asignados.</p>'}</div>`;
    root.querySelectorAll('.driver-trip').forEach(button=>button.onclick=()=>loadDetail(button.dataset.id));
   }catch(e){if(version===sessionVersion&&view===viewVersion)list.innerHTML=`<div class="driver-card"><p class="driver-error" role="alert">${esc(e.message)}</p><button class="driver-button" id="retryDriverTrips">Reintentar</button></div>`;root.querySelector('#retryDriverTrips')?.addEventListener('click',loadTrips)}
  }
  window.driverBoot=({authenticated=false,error=null,setupRequired=false}={})=>{
-  stopGps();sessionVersion++;viewVersion++;
+  stopGps();gpsTrip=null;gpsConfirmed=null;gpsNeedsReview=false;gpsMessage='Abre un viaje En tránsito o Detenido para activar la ubicación.';sessionVersion++;viewVersion++;
   if(setupRequired)return login('La configuración inicial debe realizarse desde la aplicación administrativa.');
   if(!authenticated||!Auth.user)return login(error?.message||'Inicia sesión para acceder.');
   if(Auth.user.must_change_password)return changePassword();
