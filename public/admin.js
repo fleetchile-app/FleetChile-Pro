@@ -3,7 +3,7 @@
   const nav=document.getElementById('nav');
   const btn=document.createElement('button');btn.className='admin-nav-item';btn.dataset.v='configuration';btn.hidden=true;btn.setAttribute('aria-label','Administración de mi empresa');btn.innerHTML=icon+'<span>Mi empresa</span>';nav.appendChild(btn);
   btn.onclick=()=>window.configuration&&window.configuration();
-  const peopleBtn=document.createElement('button');peopleBtn.dataset.v='companyPeople';peopleBtn.hidden=true;peopleBtn.setAttribute('aria-label','Personas y accesos');peopleBtn.innerHTML=icon+'<span>Personas y accesos</span>';nav.appendChild(peopleBtn);
+  const peopleBtn=document.createElement('button');peopleBtn.dataset.v='companyPeople';peopleBtn.hidden=true;peopleBtn.setAttribute('aria-label','Personas y accesos');peopleBtn.innerHTML='<i aria-hidden="true">'+icon+'</i><span>Personas y accesos</span>';nav.appendChild(peopleBtn);
   peopleBtn.onclick=()=>window.companyPeople?.();
 
   const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));

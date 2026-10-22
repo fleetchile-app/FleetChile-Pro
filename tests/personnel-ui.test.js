@@ -65,6 +65,17 @@ function surface({payload=list(),person=ficha(),user={},fetcher,confirmation=tru
 }
 const posts=s=>s.calls.filter(call=>call.options.method&&call.options.method!=='GET');
 
+test('icono Personas y accesos usa el contenedor acotado del sidebar y no un SVG sin estilos',()=>{
+  const s=surface();s.loadAdmin();
+  const people=s.nav.children.find(button=>button.dataset.v==='companyPeople');
+  assert.ok(people);
+  assert.match(people.innerHTML,/^<i aria-hidden="true"><svg\b[^>]*>[\s\S]*<\/svg><\/i><span>Personas y accesos<\/span>$/);
+  const sidebar=fs.readFileSync(require.resolve('../public/sidebar.css'),'utf8');
+  const rule=sidebar.match(/#nav button i svg\{([^}]+)\}/)?.[1];
+  assert.ok(rule,'El icono necesita la regla compartida del sidebar');
+  for(const declaration of ['width:16px!important','height:16px!important','fill:none!important','stroke:currentColor!important'])assert.ok(rule.includes(declaration),declaration);
+});
+
 test('lista escapa textos, explica restricciones y obtiene readiness sin activar automáticamente',async()=>{
   const s=surface();await s.mount();assert.match(s.root.innerHTML,/Ana &lt;script&gt;/);assert.doesNotMatch(s.root.innerHTML,/<script>/);
   assert.match(s.root.innerHTML,/Vacaciones/);assert.match(s.root.innerHTML,/Condición laboral bloqueante/);assert.match(s.root.innerHTML,/Revisión automática: 1 accesos pendientes/);
