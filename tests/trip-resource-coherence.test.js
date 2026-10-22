@@ -201,7 +201,8 @@ test('ruta rechaza texto libre, camión ajeno y activación por estado o avance'
 
 test('migración 028 es aditiva, se registra y genera avisos actuales sin reescribir viajes',()=>{
  const sql=fs.readFileSync(require.resolve('../migrations/028_trip_resource_coherence.sql'),'utf8');
- assert.equal(MIGRATION_FILES.at(-1),'028_trip_resource_coherence.sql');
+ assert.ok(MIGRATION_FILES.includes('028_trip_resource_coherence.sql'));
+ assert.ok(MIGRATION_FILES.indexOf('028_trip_resource_coherence.sql')<MIGRATION_FILES.indexOf('029_company_admin_permissions.sql'));
  assert.match(sql,/ADD COLUMN IF NOT EXISTS details JSONB/);
  assert.match(sql,/ON CONFLICT/);
  assert.doesNotMatch(sql,/UPDATE trips|DELETE FROM trips/i);

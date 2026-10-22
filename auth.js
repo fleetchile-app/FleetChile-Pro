@@ -166,6 +166,13 @@ function registerAuthRoutes(app,pool){
     if(context.actor_type==='legacy') return requested||context.company_id||null;
     return requested||null;
   };
+  const companyUserTarget = async (db,userId,companyId) => (await db.query(`select u.id,
+    exists(select 1 from user_memberships other where other.user_id=u.id and other.active=true and other.company_id<>$2) shared_company,
+    exists(select 1 from platform_memberships pm where pm.user_id=u.id and pm.active=true) active_platform
+    from users u where u.id=$1 and (
+      exists(select 1 from user_memberships own where own.user_id=u.id and own.company_id=$2)
+      or (u.company_id=$2 and not exists(select 1 from user_memberships other where other.user_id=u.id and other.active=true and other.company_id<>$2))
+    ) for update of u`,[userId,companyId])).rows[0];
   const preventSelfMembershipMutation = table => async (req,res,next) => {
     if(req.body?.role_id===undefined && req.body?.active===undefined && req.body?.company_id===undefined)return next();
     try {
@@ -185,7 +192,13 @@ function registerAuthRoutes(app,pool){
   });
   app.post('/api/users/:id/memberships',... [authMiddleware.bind(null,pool),membershipActor],async(req,res)=>{
     const c=req.actorContext,requested=Number(req.body?.company_id),cid=membershipTargetCompany(c,Number.isInteger(requested)&&requested>0?requested:null);if(!cid)return res.status(400).json({error:'company_id es obligatorio'});if(c.actor_type==='company'&&cid!==c.company_id)return res.status(403).json({error:'Empresa no autorizada'});
-    const client=await pool.connect();try{await client.query('BEGIN');const company=(await client.query('select id from companies where id=$1 and active=true',[cid])).rows[0];if(!company)throw Object.assign(new Error(),{status:404,message:'Empresa no encontrada'});const role=await roleForScope(client,req.body?.role_id,'company');if(!role)throw Object.assign(new Error(),{status:400,message:'Rol de empresa no válido'});const r=await client.query('insert into user_memberships(user_id,company_id,role_id,active) values($1,$2,$3,$4) returning *',[req.params.id,cid,role.id,req.body?.active!==false]);await writeAudit(client,req,{companyId:cid,action:'create',entity:'user_membership',entityId:r.rows[0].id,afterData:r.rows[0]});await client.query('COMMIT');res.status(201).json(r.rows[0]);}catch(e){await client.query('ROLLBACK');res.status(e.status||400).json({error:e.message||'No se pudo crear la membership'});}finally{client.release();}
+    const client=await pool.connect();try{await client.query('BEGIN');
+      if(c.actor_type==='company'){
+        const target=await companyUserTarget(client,req.params.id,cid);
+        if(!target)throw Object.assign(new Error(),{status:404,message:'Usuario no administrable en tu empresa'});
+        if(target.active_platform)throw Object.assign(new Error(),{status:403,message:'No puedes vincular una identidad de plataforma'});
+      }
+      const company=(await client.query('select id from companies where id=$1 and active=true',[cid])).rows[0];if(!company)throw Object.assign(new Error(),{status:404,message:'Empresa no encontrada'});const role=await roleForScope(client,req.body?.role_id,'company');if(!role)throw Object.assign(new Error(),{status:400,message:'Rol de empresa no válido'});const r=await client.query('insert into user_memberships(user_id,company_id,role_id,active) values($1,$2,$3,$4) returning *',[req.params.id,cid,role.id,req.body?.active!==false]);await writeAudit(client,req,{companyId:cid,action:'create',entity:'user_membership',entityId:r.rows[0].id,afterData:r.rows[0]});await client.query('COMMIT');res.status(201).json(r.rows[0]);}catch(e){await client.query('ROLLBACK');res.status(e.status||400).json({error:e.message||'No se pudo crear la membership'});}finally{client.release();}
   });
   app.patch('/api/user-memberships/:id',... [authMiddleware.bind(null,pool),membershipActor,preventSelfMembershipMutation('user_memberships')],async(req,res)=>{
     const client=await pool.connect();try{await client.query('BEGIN');const before=(await client.query('select * from user_memberships where id=$1 for update',[req.params.id])).rows[0];if(!before){await client.query('ROLLBACK');return res.sendStatus(404)}if(req.actorContext.actor_type==='company'&&before.company_id!==req.actorContext.company_id){await client.query('ROLLBACK');return res.sendStatus(403)}const role=req.body?.role_id===undefined?{id:before.role_id}:await roleForScope(client,req.body.role_id,'company');if(!role)throw new Error('Rol de empresa no válido');const active=req.body?.active===undefined?before.active:!!req.body.active;const r=await client.query('update user_memberships set role_id=$1,active=$2,updated_at=now() where id=$3 returning *',[role.id,active,req.params.id]);await writeAudit(client,req,{companyId:before.company_id,action:before.role_id!==role.id?'role_change':active!==before.active?(active?'activate':'deactivate'):'update',entity:'user_membership',entityId:req.params.id,beforeData:before,afterData:r.rows[0]});await client.query('COMMIT');res.json(r.rows[0]);}catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message||'No se pudo actualizar la membership'});}finally{client.release();}
@@ -207,7 +220,33 @@ function registerAuthRoutes(app,pool){
   app.get('/api/roles',...protectedUserRoutes,async(req,res)=>{try{res.json((await pool.query('select id,code,name,description from roles order by id')).rows)}catch{res.status(500).json({error:'No se pudieron consultar los roles'})}});
   app.get('/api/company-roles',...protectedUserRoutes,async(req,res)=>{try{res.json((await pool.query("select id,code,name,description from roles where code in ('company_admin','manager','operations','maintenance','driver','viewer') order by id")).rows)}catch{res.status(500).json({error:'No se pudieron consultar los roles de empresa'})}});
   app.get('/api/platform-roles',...protectedUserRoutes,async(req,res)=>{if(req.user.actor_type!=='platform')return res.status(403).json({error:'Solo plataforma puede consultar roles de plataforma'});try{res.json((await pool.query("select id,code,name,description from roles where code='platform_superadmin' order by id")).rows)}catch{res.status(500).json({error:'No se pudieron consultar los roles de plataforma'})}});
-  app.get('/api/users',...protectedUserRoutes,async(req,res)=>{try{const context=resolveActorContext(req);if(!context||context.actor_type==='unresolved'||(context.scope==='company'&&!context.company_id))return res.status(403).json({error:'Contexto empresarial requerido'});const global=context.scope==='platform';const cid=global?null:context.company_id;res.json((await pool.query(`select u.id,u.name,u.email,u.phone,u.active,u.last_login_at,u.company_id,u.driver_id,u.role_id,r.code role_code,r.name role_name,c.legal_name company_name,um.role_code modern_role_code,um.role_name modern_role_name,um.company_id modern_company_id,um.company_name modern_company_name,um.active modern_membership_active,pm.role_code platform_role_code,pm.role_name platform_role_name,pm.active platform_membership_active from users u left join roles r on r.id=u.role_id left join companies c on c.id=u.company_id left join lateral (select um.company_id,um.active,rr.code role_code,rr.name role_name,cc.legal_name company_name from user_memberships um join roles rr on rr.id=um.role_id left join companies cc on cc.id=um.company_id where um.user_id=u.id and um.active=true order by um.id desc limit 1) um on true left join lateral (select pm.active,rr.code role_code,rr.name role_name from platform_memberships pm join roles rr on rr.id=pm.role_id where pm.user_id=u.id and pm.active=true order by pm.id desc limit 1) pm on true where ($1=true or u.company_id=$2 or um.company_id=$2) order by u.id desc`,[global,cid])).rows)}catch{res.status(500).json({error:'No se pudieron consultar los usuarios'})}});
+  app.get('/api/users',...protectedUserRoutes,async(req,res)=>{
+    try{
+      const context=resolveActorContext(req);
+      if(!context||context.actor_type==='unresolved'||(context.scope==='company'&&!context.company_id))return res.status(403).json({error:'Contexto empresarial requerido'});
+      const global=context.scope==='platform';
+      const cid=global?null:context.company_id;
+      const companyActor=context.actor_type==='company';
+      const identityColumns=companyActor?`coalesce(um.company_id,u.company_id) company_id,u.driver_id,coalesce(um.role_id,u.role_id) role_id,
+        case when um.id is null then r.code else um.role_code end role_code,
+        case when um.id is null then r.name else um.role_name end role_name,
+        case when um.id is null then c.legal_name else um.company_name end company_name`:
+        'u.company_id,u.driver_id,u.role_id,r.code role_code,r.name role_name,c.legal_name company_name';
+      res.json((await pool.query(`select u.id,u.name,u.email,u.phone,u.active,u.last_login_at,${identityColumns},
+        ${companyActor?'um.id modern_membership_id,':''}um.role_code modern_role_code,um.role_name modern_role_name,um.company_id modern_company_id,um.company_name modern_company_name,um.active modern_membership_active,
+        pm.role_code platform_role_code,pm.role_name platform_role_name,pm.active platform_membership_active
+        from users u left join roles r on r.id=u.role_id left join companies c on c.id=u.company_id
+        left join lateral (select um.id,um.company_id,um.role_id,um.active,rr.code role_code,rr.name role_name,cc.legal_name company_name
+          from user_memberships um join roles rr on rr.id=um.role_id left join companies cc on cc.id=um.company_id
+          where um.user_id=u.id and ${companyActor?'um.company_id=$2':'um.active=true'} order by um.id desc limit 1) um on true
+        left join lateral (select pm.active,rr.code role_code,rr.name role_name from platform_memberships pm join roles rr on rr.id=pm.role_id
+          where pm.user_id=u.id and pm.active=true order by pm.id desc limit 1) pm on true
+        where ($1=true or u.company_id=$2 or um.company_id=$2)
+        ${companyActor?`and pm.active is null and (um.company_id=$2 or (u.company_id=$2 and not exists(
+          select 1 from user_memberships other where other.user_id=u.id and other.active=true and other.company_id<>$2)))`:''}
+        order by u.id desc`,[global,cid])).rows);
+    }catch{res.status(500).json({error:'No se pudieron consultar los usuarios'})}
+  });
   app.post('/api/users',...protectedUserRoutes,async(req,res)=>{
     const b=req.body||{}; if(!clean(b.name)||!clean(b.email)||!clean(b.password)||!b.role_id)return res.status(400).json({error:'Nombre, correo, contraseña y rol son obligatorios'});
     if(String(b.password).length<10)return res.status(400).json({error:'La contraseña debe tener al menos 10 caracteres'});
@@ -248,6 +287,7 @@ function registerAuthRoutes(app,pool){
   });
   app.patch('/api/users/:id',...protectedUserRoutes,async(req,res)=>{
     const b=req.body||{};
+    if(req.user.actor_type==='company'&&(b.active!==undefined||b.role_id!==undefined))return res.status(403).json({error:'El rol y la activación empresarial se modifican mediante PATCH /api/user-memberships/:id; no puedes cambiar la identidad global'});
     if(b.password&&String(b.password).length<10)return res.status(400).json({error:'La contraseña debe tener al menos 10 caracteres'});
     if(b.name===undefined&&b.phone===undefined&&b.role_id===undefined&&b.active===undefined&&!b.password)return res.status(400).json({error:'No hay cambios'});
     const client=await pool.connect();
@@ -259,8 +299,10 @@ function registerAuthRoutes(app,pool){
       const platform=context.scope==='platform';
       const global=platform;
       const targetCompany=context.scope==='company'?context.company_id:null;
-      const locked=(await client.query('select id from users where id=$1 and ($2=true or company_id=$3) for update',[req.params.id,isAdmin||global,targetCompany])).rows[0];
+      const companyActor=context.actor_type==='company';
+      const locked=companyActor?await companyUserTarget(client,req.params.id,targetCompany):(await client.query('select id from users where id=$1 and ($2=true or company_id=$3) for update',[req.params.id,isAdmin||global,targetCompany])).rows[0];
       if(!locked){await client.query('ROLLBACK');return res.sendStatus(404);}
+      if(companyActor&&(locked.shared_company||locked.active_platform)){await client.query('ROLLBACK');return res.status(403).json({error:'No puedes editar la identidad global de una cuenta compartida con otra empresa o con plataforma'});}
       const before=await userAuditView(client,locked.id);
       if(!before) throw new Error('No se pudo obtener el usuario antes de actualizar');
       if(b.role_id!==undefined){
@@ -278,12 +320,12 @@ function registerAuthRoutes(app,pool){
       if(b.active!==undefined)add('active=$'+(vals.length+1),!!b.active);
       if(b.password)add('password_hash=$'+(vals.length+1),await hashPassword(String(b.password)));
       vals.push(req.params.id);
-      const r=await client.query(`update users set ${fields.join(',')},updated_at=now() where id=$${vals.length} and ($${vals.length+1}=true or company_id=$${vals.length+2}) returning id`,[...vals,isAdmin||global,targetCompany]);
+      const r=companyActor?await client.query(`update users set ${fields.join(',')},updated_at=now() where id=$${vals.length} returning id`,vals):await client.query(`update users set ${fields.join(',')},updated_at=now() where id=$${vals.length} and ($${vals.length+1}=true or company_id=$${vals.length+2}) returning id`,[...vals,isAdmin||global,targetCompany]);
       if(!r.rowCount) throw new Error('No se pudo actualizar el usuario autorizado');
       const after=await userAuditView(client,r.rows[0].id);
       if(!after) throw new Error('No se pudo obtener el usuario actualizado');
       const responseUser=await userView(client,r.rows[0].id);
-      await writeAudit(client,req,{companyId:after.company_id,action:'update',entity:'user',entityId:r.rows[0].id,beforeData:before,afterData:after});
+      await writeAudit(client,req,{companyId:companyActor?targetCompany:after.company_id,action:'update',entity:'user',entityId:r.rows[0].id,beforeData:before,afterData:after});
       await client.query('COMMIT');
       res.json(responseUser);
     } catch{
