@@ -77,7 +77,7 @@
 .linked-trip-view #app,
 .linked-trip-view #dx,
 .linked-trip-view #newBtn{display:none!important}
-.linked-trip-view main{margin-left:0!important;width:100%;min-width:0}
+.linked-trip-view main{margin-left:0!important;width:100%;min-width:0;min-height:0;padding-bottom:0}
 .linked-trip-view main>header{position:static;inset:auto}
 .linked-trip-view #drawer{position:static;inset:auto;background:transparent;z-index:auto}
 .linked-trip-view #drawer .drawer{
