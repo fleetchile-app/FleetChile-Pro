@@ -4,12 +4,13 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const {registerAuthRoutes,userView}=require('../auth');
 
-const companyActor={id:1,company_id:10,role_code:'company_admin',memberships:[{id:1,company_id:10,role_code:'company_admin',permissions:['company.users.manage']}]};
+const companyActor={id:1,company_id:10,role_code:'company_admin',memberships:[{id:1,company_id:10,role_code:'company_admin',permissions:['company.users.manage']}],personnel_state:{company_id:10,policy:{enforced:false,time_zone:'America/Santiago'},regularization_eligible:true,person:null,membership:{active:true,role_code:'company_admin'},account_active:true,contracts:[],conditions:[],licenses:[]}};
 const target={id:42,name:'Cuenta conductor',email:'conductor@example.test',company_id:10,driver_id:null,role_code:'driver',memberships:[{id:2,company_id:10,role_code:'driver',permissions:[]}]};
 function poolFor(options={}){
   const calls=[];
   const user={...target,...options.target};
-  const actor=options.actor||companyActor;
+  const rawActor=options.actor||companyActor;
+  const actor=rawActor.scope==='platform'||rawActor.platform_memberships?.length||rawActor.personnel_state?rawActor:{...rawActor,personnel_state:{company_id:rawActor.company_id,policy:{enforced:false,time_zone:'America/Santiago'},regularization_eligible:true,person:null,membership:{active:true,role_code:rawActor.role_code||null},account_active:true,contracts:[],conditions:[],licenses:[]}};
   let releases=0;
   const db={async query(sql,values=[]){
     calls.push({sql,values});
@@ -35,13 +36,13 @@ function poolFor(options={}){
 function setup(options={}){
   const routes=[];
   const app={};
-  for(const method of ['get','post','patch'])app[method]=(path,...handlers)=>routes.push({method,path,handlers});
+  for(const method of ['get','post','patch','put','delete'])app[method]=(path,...handlers)=>routes.push({method,path,handlers});
   const pool=poolFor(options);
   registerAuthRoutes(app,pool);
   return {pool,route:method=>routes.find(route=>route.path==='/api/users/:id/driver-assignment'&&route.method===method)};
 }
 async function invoke(route,{body={driver_id:8},actor=companyActor,full=false,token=true}={}){
-  const req={params:{id:'42'},body,user:actor.id===1&&actor===companyActor?{id:1,actor_type:'company',scope:'company',company_id:10,membership_id:1,role_code:'company_admin',permissions:['company.users.manage']}:actor,ip:'127.0.0.1',get:key=>key==='authorization'&&token?'Bearer test-token':''};
+  const req={params:{id:'42'},body,user:actor.id===1&&actor===companyActor?{id:1,actor_type:'company',scope:'company',company_id:10,membership_id:1,role_code:'company_admin',permissions:['company.users.manage'],personnel_state:companyActor.personnel_state}:actor,ip:'127.0.0.1',get:key=>key==='authorization'&&token?'Bearer test-token':''};
   const res={statusCode:200,status(code){this.statusCode=code;return this},json(payload){this.payload=payload;return this},sendStatus(code){this.statusCode=code;return this}};
   for(const handler of full?route.handlers:[route.handlers.at(-1)]){
     let next=false;
@@ -187,7 +188,7 @@ test('identificador numérico no seguro no se equipara a un BIGINT exacto',async
   assert.equal(pool.calls.some(call=>call.sql.startsWith('update users set driver_id')),false);
 });
 
-test('administración permite seleccionar la ficha existente sin reingresar sus datos',async()=>{
+test('diálogo de asociación conserva ficha existente y refresca Personas sin reingresar sus datos',async()=>{
   const elements={};
   const requests=[];
   const alerts=[];
@@ -203,6 +204,8 @@ test('administración permite seleccionar la ficha existente sin reingresar sus 
   }};
   context.window=context;
   context.adminSurface='company';
+  let personnelRefreshes=0;
+  context.renderCompanyPeople=async()=>{personnelRefreshes++;};
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(require.resolve('../public/admin.js'),'utf8'),context);
   await context.associateUserDriver(42);
@@ -214,7 +217,7 @@ test('administración permite seleccionar la ficha existente sin reingresar sus 
   const save=requests.find(request=>request.options.method==='PATCH');
   assert.equal(save.url,'/api/users/42/driver-assignment');
   assert.deepEqual(JSON.parse(save.options.body),{driver_id:8});
-  assert.match(elements['admin-panel'].innerHTML,/Ver asociación/);
+  assert.equal(personnelRefreshes,1);
   assert.equal(alerts.length,1);
   assert.match(alerts[0],/Conductor asociado/);
 });

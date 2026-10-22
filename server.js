@@ -14,6 +14,7 @@ const {registerAuthRoutes,authMiddleware,requirePermission,resolveActorContext,i
 const {writeAudit}=require("./audit");
 const {registerAdminRoutes}=require("./admin-api");
 const {registerEconomicsRoutes}=require("./economics-api");
+const {startPersonnelMonitor}=require('./personnel-monitor');
 const app=express();const PORT=Number(process.env.PORT||3000);const DATABASE_URL=process.env.DATABASE_URL;
 if(!DATABASE_URL){console.error("Falta DATABASE_URL. Define la variable de entorno antes de iniciar FleetChile.");process.exit(1)}
 const pool=new Pool({connectionString:DATABASE_URL,max:Number(process.env.DB_POOL_MAX||10),idleTimeoutMillis:30000,connectionTimeoutMillis:10000,ssl:process.env.DATABASE_SSL==="true"?{rejectUnauthorized:false}:undefined});
@@ -110,5 +111,10 @@ app.delete("/api/:table/:id",requireTablePermission(writePermissions),async(req,
 
 app.get("/driver",(req,res)=>res.sendFile(path.join(__dirname,"public","driver.html")));
 app.use((req,res,next)=>{if(req.method==="GET"&&!req.path.startsWith("/api/"))return res.sendFile(path.join(__dirname,"public","index.html"));next()});
-async function start(){const server=await startApplication({app,pool,port:PORT,initialize:()=>initializeDatabase(pool,{initializeCorePlatform})});const shutdown=async()=>{server.close(async()=>{await pool.end();process.exit(0)})};process.on("SIGTERM",shutdown);process.on("SIGINT",shutdown)}
+async function start(){
+ const server=await startApplication({app,pool,port:PORT,initialize:()=>initializeDatabase(pool,{initializeCorePlatform})});
+ const stopPersonnelMonitor=startPersonnelMonitor(pool);
+ const shutdown=async()=>{await stopPersonnelMonitor();server.close(async()=>{await pool.end();process.exit(0)})};
+ process.on("SIGTERM",shutdown);process.on("SIGINT",shutdown);
+}
 start().catch(err=>{logStartupError(console,err);process.exit(1)});

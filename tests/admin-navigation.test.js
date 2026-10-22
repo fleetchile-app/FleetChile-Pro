@@ -19,6 +19,9 @@ function surface({user=platform,responses={}}={}){
   if(result instanceof Error)throw result;
   return {ok:!result?.error,status:result?.error?403:200,json:async()=>result};
  }};
+ // This suite isolates admin navigation. The actual personnel renderer and DOM
+ // interactions are exercised in personnel-ui.test.js.
+ context.renderCompanyPeople=async()=>{elements['admin-panel'].innerHTML='<section>Personas y accesos</section>';};
  context.window=context;vm.createContext(context);vm.runInContext(source,context);
  return {context,elements,sidebar,requests,events,get stopped(){return stopped}};
 }
@@ -180,7 +183,7 @@ test('faltantes contractuales no se sustituyen por planes, módulos o límites i
 test('sin dashboard.read los datos propios y Usuarios siguen accesibles y el resumen no inventa ceros',async()=>{
  const s=surface({user:company,responses:{'/api/core/summary':{error:'Permiso requerido: dashboard.read'}}});await s.context.configuration();
  assert.match(s.elements['admin-panel'].innerHTML,/Resumen operativo no disponible/);assert.match(s.elements['admin-panel'].innerHTML,/N\/D/);
- assert.equal(s.elements.title.textContent,'Empresa A');await s.context.adminTab('users');assert.match(s.elements['admin-panel'].innerHTML,/Usuarios de mi empresa/);
+ assert.equal(s.elements.title.textContent,'Empresa A');await s.context.adminTab('users');assert.match(s.elements['admin-panel'].innerHTML,/Personas y accesos/);
 });
 
 test('perfil de otra empresa se rechaza y la consulta fallida ofrece reintentar',async()=>{

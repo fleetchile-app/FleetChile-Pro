@@ -2,6 +2,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const {registerAuthRoutes}=require('../auth');
 const companyActor={id:1,company_id:20,company_name:'Empresa legacy B',role_code:'viewer',legacy_permissions:[],memberships:[{id:11,company_id:10,active:true,role_code:'company_admin',permissions:['company.users.manage']}],platform_memberships:[]};
+companyActor.personnel_state={company_id:10,policy:{enforced:false,time_zone:'America/Santiago'},regularization_eligible:true,person:null,membership:{active:true,role_code:'company_admin'},account_active:true,contracts:[],conditions:[],licenses:[]};
 const record={id:10,legal_name:'Empresa A',rut:'RUT registrado',trade_name:'Nombre comercial',email:'contacto@example.test',phone:'Teléfono registrado',address:'Dirección registrada',commune:'Comuna registrada',region:'Región registrada',active:true,plan_code:'plan_registrado',license_status:'active',license_started_at:'2026-10-01',license_expires_at:null,capabilities:{fleet:true,gps:false},user_limit:50,truck_limit:20,registered_users:3,active_users:2,trucks:4,secret_billing_key:'NO EXPONER'};
 
 function setup({actor=companyActor,row=record,dbError=false}={}){
@@ -9,6 +10,7 @@ function setup({actor=companyActor,row=record,dbError=false}={}){
  const pool={async query(sql,values=[]){
   calls.push({sql,values});
   if(sql.startsWith('select s.user_id'))return {rows:actor?[{user_id:1}]:[],rowCount:actor?1:0};
+  if(sql.startsWith('select u.id,u.name,u.email,u.phone,u.active'))return {rows:actor?[{...actor,active:true,personnel_state:actor.personnel_state}]:[],rowCount:actor?1:0};
   if(sql.includes('po.owner_type ownership_role'))return {rows:[actor],rowCount:1};
   if(sql.startsWith('update user_sessions'))return {rows:[],rowCount:0};
   if(sql==='select id from companies where id=$1 and active=true'){assert.deepEqual(values,[10]);return {rows:[{id:10}],rowCount:1}}

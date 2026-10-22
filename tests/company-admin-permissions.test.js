@@ -28,7 +28,9 @@ function rawIdentity({companyId=10,legacyCompany=20,legacyRole='admin',codes=per
   return {id:71,name:'Administrador de empresa',company_id:legacyCompany,
     role_code:legacyRole,role_name:'Administrador legacy',legacy_permissions:['platform.users.manage'],
     memberships:[{id:701,company_id:companyId,role_code:'company_admin',active:true,permissions:[...codes]}],
-    platform_memberships:[],ownership_role:null,ownership_active:false};
+    platform_memberships:[],ownership_role:null,ownership_active:false,
+    personnel_state:{company_id:companyId,policy:{enforced:false,time_zone:'America/Santiago'},regularization_eligible:true,person:null,
+      membership:{active:true,role_code:'company_admin'},account_active:true,contracts:[],conditions:[],licenses:[]}};
 }
 function identityPool(raw=rawIdentity()){
   const calls=[];

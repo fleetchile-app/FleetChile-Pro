@@ -18,7 +18,12 @@
   const r=await fetch(path,options),data=await r.json().catch(()=>({}));
   if(version!==sessionVersion)throw new Error('La sesión cambió.');
   if(r.status===401)expireSession();
-  if(!r.ok)throw Object.assign(new Error(data.error||`HTTP ${r.status}`),{status:r.status});
+  if(data.code==='PERSONNEL_ACCESS_BLOCKED'){
+   stopGps('Acceso suspendido. Solicita a administración revisar tu habilitación.');
+   gpsNeedsReview=true;viewVersion++;
+   authenticatedScreen('<div class="driver-card driver-error" role="alert"><h1>Acceso temporalmente restringido</h1><p>Administración debe revisar tu habilitación. El GPS se ha detenido. Puedes cerrar sesión desde Mi cuenta.</p></div>');
+  }
+  if(!r.ok)throw Object.assign(new Error(data.error||`HTTP ${r.status}`),{status:r.status,code:data.code});
   return data;
  }
  function accountHeader(){

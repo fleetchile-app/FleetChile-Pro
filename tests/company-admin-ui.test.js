@@ -6,7 +6,7 @@ const vm=require('node:vm');
 function surface({platform=false,memberId='12',memberActive=true,accountActive=true,fail=false,confirm=true}={}){
  const user=platform?{id:1,actor_type:'platform',platform_membership_id:2,permissions:['platform.users.manage','platform.companies.manage']}:{id:1,actor_type:'company',company_id:10,membership_id:11,permissions:['company.users.manage','dashboard.read']};
  const row={id:2,name:'Usuario compartido',company_id:10,active:accountActive,modern_membership_id:memberId,modern_membership_active:memberActive,modern_role_code:'operations',modern_company_name:'Empresa A'};
- const elements={},requests=[],alerts=[],confirmations=[];
+ const elements={},requests=[],alerts=[],confirmations=[];let personnelRenders=0;
  const element=()=>({hidden:false,innerHTML:'',dataset:{},appendChild(){},setAttribute(){},classList:{add(){},remove(){},toggle(){}}});
  const context={Auth:{user},document:{getElementById:id=>elements[id]||(elements[id]=element()),createElement:element,querySelectorAll:()=>[]},alert:message=>alerts.push(message),confirm:message=>{confirmations.push(message);return confirm},fetch:async(url,options={})=>{
   requests.push({url,options});let data={};
@@ -20,33 +20,36 @@ function surface({platform=false,memberId='12',memberActive=true,accountActive=t
   }
   return {ok:true,json:async()=>data};
  }};
+ // Navigation's dependency is isolated here. The real people renderer,
+ // account forms and backend-facing payloads are covered in personnel-ui.test.js.
+ context.renderCompanyPeople=async()=>{personnelRenders++;elements['admin-panel'].innerHTML='<section>Personas y accesos</section>';};
  context.window=context;vm.createContext(context);vm.runInContext(fs.readFileSync(require.resolve('../public/admin.js'),'utf8'),context);
- return {context,elements,requests,alerts,confirmations,row};
+ return {context,elements,requests,alerts,confirmations,row,get personnelRenders(){return personnelRenders;}};
 }
 
 test('empresa desactiva membership propia, no la cuenta global del usuario compartido',async()=>{
  const s=surface();await s.context.configuration();await s.context.adminTab('users');
- assert.match(s.elements['admin-panel'].innerHTML,/toggleCompanyMembership\('12',false\)/);
+ assert.match(s.elements['admin-panel'].innerHTML,/Personas y accesos/);assert.equal(s.personnelRenders,1);
  assert.doesNotMatch(s.elements['admin-panel'].innerHTML,/onclick="toggleAdminUser/);
  await s.context.toggleCompanyMembership('12',false);
  const writes=s.requests.filter(request=>request.options.method);
  assert.equal(writes.length,1);assert.equal(writes[0].url,'/api/user-memberships/12');
  assert.deepEqual(JSON.parse(writes[0].options.body),{active:false});assert.equal(s.row.active,true);
- assert.match(s.elements['admin-panel'].innerHTML,/Activar acceso empresa/);
+ assert.equal(s.row.modern_membership_active,false);assert.equal(s.personnelRenders,2);
  assert.match(s.confirmations[0],/otras empresas no se modificarán/);
 });
 
 test('membership inactiva puede reactivarse sin modificar bloqueo global',async()=>{
  const s=surface({memberActive:false,accountActive:false});await s.context.configuration();await s.context.adminTab('users');
- assert.match(s.elements['admin-panel'].innerHTML,/Cuenta bloqueada por plataforma/);
+ assert.equal(s.personnelRenders,1);
  await s.context.toggleCompanyMembership('12',true);
  assert.equal(s.row.modern_membership_active,true);assert.equal(s.row.active,false);
- assert.match(s.elements['admin-panel'].innerHTML,/Cuenta bloqueada por plataforma/);
+ assert.equal(s.personnelRenders,2);
 });
 
 test('sin membership no ofrece mutación global como sustituto',async()=>{
  const s=surface({memberId:null});await s.context.configuration();await s.context.adminTab('users');
- assert.match(s.elements['admin-panel'].innerHTML,/Sin membership empresarial/);
+ assert.match(s.elements['admin-panel'].innerHTML,/Personas y accesos/);assert.equal(s.personnelRenders,1);
  assert.doesNotMatch(s.elements['admin-panel'].innerHTML,/onclick="toggleCompanyMembership|onclick="toggleAdminUser/);
 });
 
@@ -70,7 +73,7 @@ test('denegación del servidor se muestra sin afirmar cambio de estado',async()=
 
 test('id BIGINT de membership no pierde precisión al enviarse',async()=>{
  const id='9007199254740993',s=surface({memberId:id});await s.context.configuration();await s.context.adminTab('users');
- assert.match(s.elements['admin-panel'].innerHTML,new RegExp("toggleCompanyMembership\\('"+id+"',false\\)"));
+ assert.equal(s.personnelRenders,1);
  await s.context.toggleCompanyMembership(id,false);
  assert.ok(s.requests.some(request=>request.url==='/api/user-memberships/'+id));
 });

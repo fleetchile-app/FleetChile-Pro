@@ -3,8 +3,9 @@ const assert=require('node:assert/strict');
 const {registerAuthRoutes}=require('../auth');
 
 const result=rows=>({rows,rowCount:rows.length});
+const personnelSnapshot={company_id:10,policy:{enforced:false,time_zone:'America/Santiago'},regularization_eligible:true,person:null,membership:{active:true,role_code:'company_admin'},account_active:true,contracts:[],conditions:[],licenses:[]};
 const company=(extra={})=>({id:1,company_id:99,role_code:'viewer',legacy_permissions:[],
-  memberships:[{id:11,company_id:10,role_code:'company_admin',active:true,permissions:['company.users.manage']}],platform_memberships:[],...extra});
+  memberships:[{id:11,company_id:10,role_code:'company_admin',active:true,permissions:['company.users.manage']}],platform_memberships:[],personnel_state:personnelSnapshot,...extra});
 const platform=()=>company({memberships:[],platform_memberships:[{id:8,active:true,role_code:'platform_superadmin',permissions:['platform.users.manage']}]});
 const legacy=()=>company({memberships:[],company_id:10,role_code:'admin'});
 
@@ -16,6 +17,7 @@ function harness(actor=company(),steps=[]){
     calls.push({sql,values});
     try{
       if(sql.startsWith('select s.user_id from user_sessions'))return result([{user_id:1}]);
+      if(sql.startsWith('select 1 from company_people where user_id='))return result([]);
       if(sql.includes('po.owner_type ownership_role')&&values[0]===1)return result(actor?[actor]:[]);
       if(sql.startsWith('update user_sessions set last_seen_at'))return result([]);
       const step=steps.shift();assert.ok(step,`Unexpected SQL: ${sql}`);
@@ -144,7 +146,7 @@ for(const [name,actor,cid] of [['platform',platform,null],['legacy',legacy,10]])
   assert.equal((await h.invoke('patch','/api/users/:id',{role_id:5,active:false})).statusCode,200);
 });
 const selfCheck=userId=>({sql:/^select user_id from user_memberships where id=\$1$/,values:['42'],rows:[{user_id:userId}]});
-const lockMembership=companyId=>({sql:/^select \* from user_memberships where id=\$1 for update$/,values:['42'],rows:[{id:42,user_id:2,company_id:companyId,role_id:4,active:false}]});
+const lockMembership=companyId=>({sql:/^select .*from user_memberships .*where um\.id=\$1 for update$/,values:['42'],rows:[{id:42,user_id:2,company_id:companyId,role_id:4,active:false,has_personnel_profile:false}]});
 test('PATCH membership self guard executes before transaction',async()=>{
   const h=harness(company(),[selfCheck(1)]);assert.equal((await h.invoke('patch','/api/user-memberships/:id',{active:true})).statusCode,403);assert.equal(h.connected,0);
 });

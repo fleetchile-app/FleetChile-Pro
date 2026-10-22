@@ -54,6 +54,16 @@ async function surface({permission='prompt',unsupported=false,secure=true,fetche
 }
 const posts=s=>s.calls.filter(call=>call.options.method==='POST');
 
+test('bloqueo de personal detiene GPS y conserva el cierre de sesión sin datos sensibles',async()=>{
+ const s=await surface({fetcher:async(url,options)=>options.method==='POST'&&url.endsWith('/positions')?
+  {ok:false,status:403,json:async()=>({code:'PERSONNEL_ACCESS_BLOCKED',error:'Acceso restringido'})}:null});
+ await s.click();await s.emit();
+ assert.equal(s.watches.size,0);
+ assert.match(s.root.innerHTML,/Acceso temporalmente restringido/);
+ assert.match(s.root.innerHTML,/data-driver-logout/);
+ assert.doesNotMatch(s.root.innerHTML,/medical_leave|RUT|diagnóstico/);
+});
+
 test('no solicita ubicación ni envía posiciones hasta activar explícitamente',async()=>{
  const s=await surface();assert.equal(s.watches.size,0);assert.equal(posts(s).length,0);
  assert.match(s.panel().querySelector('[data-gps-summary]').textContent,/desactivada/);

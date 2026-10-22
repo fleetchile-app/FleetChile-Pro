@@ -3,9 +3,11 @@
   const nav=document.getElementById('nav');
   const btn=document.createElement('button');btn.className='admin-nav-item';btn.dataset.v='configuration';btn.hidden=true;btn.setAttribute('aria-label','Administración de mi empresa');btn.innerHTML=icon+'<span>Mi empresa</span>';nav.appendChild(btn);
   btn.onclick=()=>window.configuration&&window.configuration();
+  const peopleBtn=document.createElement('button');peopleBtn.dataset.v='companyPeople';peopleBtn.hidden=true;peopleBtn.setAttribute('aria-label','Personas y accesos');peopleBtn.innerHTML=icon+'<span>Personas y accesos</span>';nav.appendChild(peopleBtn);
+  peopleBtn.onclick=()=>window.companyPeople?.();
 
   const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-  let adminIdentity=null,adminRevision=0,activeAdmin=null,companyProfile=null;
+  let adminIdentity=null,adminRevision=0,activeAdmin=null,companyProfile=null,peopleEntrySession='';
   const owner=u=>Boolean(u?.actor_type==='platform'&&u.ownership_role&&u.ownership_active!==false);
   const legacy=u=>Boolean(u?.actor_type==='legacy'&&u.role_code==='admin');
   const companyAdmin=u=>Boolean((u?.actor_type==='company'&&u.membership_id&&u.permissions?.includes('company.users.manage'))||legacy(u));
@@ -39,6 +41,22 @@
   window.renderAdminNavigation=function(user){
     if(String(user?.id||'')!==String(adminIdentity?.id||'')||String(user?.company_id||'')!==String(adminIdentity?.company_id||''))companyProfile=null;
     adminIdentity=user||null;btn.hidden=!companyAdmin(user);
+    const companyActor=user?.actor_type==='company'&&user.membership_id;
+    const selectedCompany=user?.active_company_context||(typeof localStorage!=='undefined'&&localStorage.getItem('fleet_company_context'));
+    const contextualPlatform=user?.actor_type==='platform'&&selectedCompany;
+    const peopleAllowed=['company.people.read','company.people.manage','company.licenses.manage'].some(code=>user?.permissions?.includes(code));
+    peopleBtn.hidden=!((companyActor&&peopleAllowed)||(contextualPlatform&&peopleAllowed));
+    const entryKey=user?[user.id,user.company_id,window.Auth?.token||''].join(':'):'';
+    if(!user)peopleEntrySession='';
+    if(entryKey&&entryKey!==peopleEntrySession){
+      peopleEntrySession=entryKey;
+      if(user.role_code==='administrative'&&!user.permissions?.includes('dashboard.read')&&!peopleBtn.hidden){
+        Promise.resolve().then(()=>{
+          const selected=document.querySelector?.('#nav button.active');
+          if(!activeAdmin&&selected?.dataset.v==='dashboard'&&entryKey===[adminIdentity?.id,adminIdentity?.company_id,window.Auth?.token||''].join(':'))return window.companyPeople?.();
+        }).catch(()=>{});
+      }
+    }
     const host=document.getElementById('platformAdminMenuHost'),items=platformItems(user);
     if(!host)return;
     host.hidden=!items.length;
@@ -126,7 +144,7 @@
   window.newCompany=()=>{window.editCompany(null)};
   window.editCompany=async id=>{const c=id===null?{}:(await get('companies')).find(x=>Number(x.id)===Number(id))||{};document.getElementById('mt').textContent=id===null?'Nueva empresa':'Gestionar empresa';document.getElementById('form').innerHTML=`<div class="formgrid">${[['legal_name','Razón social'],['rut','RUT'],['trade_name','Nombre comercial'],['email','Correo'],['phone','Teléfono'],['plan_code','Plan'],['license_status','Estado licencia'],['license_started_at','Inicio licencia'],['license_expires_at','Vencimiento'],['user_limit','Límite usuarios'],['truck_limit','Límite camiones']].map(([k,l])=>`<div class="field"><label>${l}</label><input name="${k}" value="${esc(c[k]||'')}" ${k==='legal_name'?'required':''}></div>`).join('')}<div class="field"><label>Estado empresa</label><select name="active"><option value="true" ${c.active!==false?'selected':''}>Activa</option><option value="false" ${c.active===false?'selected':''}>Inactiva</option></select></div><div class="formactions"><button class="primary">Guardar</button></div></div>`;document.getElementById('modal').classList.remove('hidden');document.getElementById('form').onsubmit=async e=>{e.preventDefault();const o=Object.fromEntries(new FormData(e.target));o.active=o.active==='true';for(const k of ['user_limit','truck_limit'])if(o[k])o[k]=Number(o[k]);try{const url=id===null?'companies':'admin/companies/'+id;const r=await fetch('/api/'+url,{method:id===null?'POST':'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});const d=await r.json();if(!r.ok)throw Error(d.error||'No se pudo guardar');close();organization()}catch(err){alert(err.message)}}};
   window.saveCompany=async id=>{const o={};['legal_name','rut','trade_name','email','phone','address','commune','region'].forEach(k=>o[k]=document.getElementById('co-'+k).value);try{await patch('admin/companies/'+id,o);alert('Organización actualizada');organization()}catch(e){alert(e.message)}};
-  async function users(){const platform=window.adminSurface==='platform';const u=await get('users');document.getElementById('admin-panel').innerHTML=`<div class="admin-card"><div class="admin-section-head"><div><h3>Usuarios</h3><p>${platform?'Usuarios de plataforma y empresas.':'Usuarios de mi empresa.'}</p></div><button class="primary" onclick="newAdminUser()">+ Nuevo usuario</button></div><div class="wrap"><table class="table"><thead><tr><th>Nombre</th><th>Correo</th><th>Alcance</th><th>Rol moderno</th><th>Empresa</th><th>Acceso conductor</th><th>Último acceso</th><th>Estado</th><th></th></tr></thead><tbody>${u.map(x=>{const isPlatform=!!x.platform_role_code;const role=isPlatform?(x.platform_role_name||x.platform_role_code):(x.modern_role_name||x.role_name);const company=isPlatform?'—':(x.modern_company_name||x.company_name||'—');const membershipId=/^[1-9]\d*$/.test(String(x.modern_membership_id))?String(x.modern_membership_id):null;const memberActive=x.modern_membership_active;const active=platform?(isPlatform?(x.platform_membership_active??x.active):(memberActive??x.active)):Boolean(memberActive&&x.active);return `<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.email)}</td><td>${isPlatform?'PLATFORM':'COMPANY'}</td><td>${esc(role||'Sin rol moderno')}</td><td>${esc(company)}</td><td>${!isPlatform&&(x.modern_role_code||x.role_code)==='driver'?`<span>${x.driver_id?'Asociado':'Sin asociar'}</span><button class="smallbtn" onclick="associateUserDriver(${Number(x.id)})">${x.driver_id?'Ver asociación':'Asociar conductor'}</button>`:'—'}</td><td>${x.last_login_at?new Date(x.last_login_at).toLocaleString('es-CL'):'Nunca'}</td><td><span class="admin-status ${active?'on':'off'}">${!platform&&!x.active?'Cuenta bloqueada por plataforma':active?'Activo':'Inactivo'}</span></td><td>${platform?`<button class="smallbtn" onclick="toggleAdminUser(${x.id},${!x.active})">${x.active?'Desactivar cuenta':'Activar cuenta'}</button>`:membershipId?`<button class="smallbtn" onclick="toggleCompanyMembership('${membershipId}',${!memberActive})">${memberActive?'Desactivar acceso empresa':'Activar acceso empresa'}</button>`:'<span>Sin membership empresarial</span>'}</td></tr>`}).join('')}</tbody></table></div></div>`}
+  async function users(){const platform=window.adminSurface==='platform';const u=await get('users');document.getElementById('admin-panel').innerHTML=`<div class="admin-card"><div class="admin-section-head"><div><h3>Usuarios</h3><p>${platform?'Usuarios de plataforma y empresas.':'Usuarios de mi empresa.'}</p></div><button class="primary" onclick="newAdminUser()">+ Nuevo usuario</button></div><div class="wrap"><table class="table"><thead><tr><th>Nombre</th><th>Correo</th><th>Alcance</th><th>Rol moderno</th><th>Empresa</th><th>Acceso conductor</th><th>Último acceso</th><th>Estado</th><th></th></tr></thead><tbody>${u.map(x=>{const isPlatform=!!x.platform_role_code;const role=isPlatform?(x.platform_role_name||x.platform_role_code):(x.modern_role_name||x.role_name);const company=isPlatform?'—':(x.modern_company_name||x.company_name||'—');const membershipId=/^[1-9]\d*$/.test(String(x.modern_membership_id))?String(x.modern_membership_id):null;const memberActive=x.modern_membership_active;const active=platform?(isPlatform?(x.platform_membership_active??x.active):(memberActive??x.active)):Boolean(memberActive&&x.active);return `<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.email)}</td><td>${isPlatform?'PLATFORM':'COMPANY'}</td><td>${esc(role||'Sin rol moderno')}</td><td>${esc(company)}</td><td>${!isPlatform&&(x.modern_role_code||x.role_code)==='driver'?`<span>${x.driver_id?'Asociado':'Sin asociar'}</span><button class="smallbtn" onclick="associateUserDriver(${Number(x.id)})">${x.driver_id?'Ver asociación':'Asociar conductor'}</button>`:'—'}</td><td>${x.last_login_at?new Date(x.last_login_at).toLocaleString('es-CL'):'Nunca'}</td><td><span class="admin-status ${active?'on':'off'}">${!platform&&!x.active?'Cuenta bloqueada por plataforma':active?'Activo':'Inactivo'}</span></td><td>${platform?`<button class="smallbtn" onclick="toggleAdminUser(${x.id},${!x.active})">${x.active?'Desactivar cuenta':'Activar cuenta'}</button>`:membershipId?`<button class="smallbtn" onclick="toggleCompanyMembership('${membershipId}',${!memberActive})">${memberActive?'Desactivar acceso empresa':'Activar acceso empresa'}</button>`:'<span>Sin membership empresarial</span>'}${platform?platformPersonnelExemptionAction(x):''}</td></tr>`}).join('')}</tbody></table></div></div>`}
   window.associateUserDriver=async id=>{
     try{
       const data=await get('users/'+encodeURIComponent(id)+'/driver-assignment');
@@ -150,7 +168,45 @@
       };
     }catch(error){alert(error.message)}
   };
-  window.newAdminUser=async()=>{const platform=window.adminSurface==='platform';const[r,c,p]=platform?await Promise.all([get('company-roles'),get('companies'),get('platform-roles')]):[await get('company-roles'),[],[]];const roles=platform?[...p.map(x=>({...x,_scope:'PLATFORM'})),...r.map(x=>({...x,_scope:'COMPANY'}))]:r.map(x=>({...x,_scope:'COMPANY'}));document.getElementById('mt').textContent='Nuevo usuario';document.getElementById('form').innerHTML=`<div class="formgrid"><div class="field"><label>Nombre</label><input name="name" required></div><div class="field"><label>Correo</label><input name="email" type="email" required></div><div class="field"><label>Teléfono</label><input name="phone"></div><div class="field"><label>Contraseña</label><input name="password" type="password" minlength="10" required></div><div class="field"><label>Alcance</label><select name="scope" ${platform?'':'disabled'}>${platform?'<option value="PLATFORM">PLATFORM</option><option value="COMPANY" selected>COMPANY</option>':'<option value="COMPANY">COMPANY</option>'}</select></div><div class="field"><label>Rol</label><select name="role_id" required>${roles.map(x=>`<option data-scope="${x._scope}" value="${x.id}">${esc(x.name)} · ${x._scope}</option>`).join('')}</select></div><div class="field"><label>Empresa</label><select name="company_id"><option value="">${platform?'Seleccionar empresa para usuario COMPANY':'Mi empresa'}</option>${c.map(x=>`<option value="${x.id}">${esc(x.legal_name)}</option>`).join('')}</select></div><div class="formactions"><button class="primary">Crear usuario</button></div></div>`;const scope=document.querySelector('#form [name="scope"]'),roleSelect=document.querySelector('#form [name="role_id"]'),companySelect=document.querySelector('#form [name="company_id"]');const sync=()=>{const isP=scope?.value==='PLATFORM';[...roleSelect.options].forEach(o=>o.hidden=o.dataset.scope!==(isP?'PLATFORM':'COMPANY'));roleSelect.value=[...roleSelect.options].find(o=>!o.hidden)?.value||'';companySelect.disabled=isP;companySelect.value=isP?'':''};scope?.addEventListener('change',sync);sync();document.getElementById('modal').classList.remove('hidden');document.getElementById('form').onsubmit=async e=>{e.preventDefault();const o=Object.fromEntries(new FormData(e.target));o.role_id=Number(o.role_id);o.company_id=o.company_id?Number(o.company_id):null;try{const r=await fetch('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});const d=await r.json();if(!r.ok)throw Error(d.error);close();users()}catch(err){alert(err.message)}}};
+  window.newAdminUser=async()=>{
+    const platform=window.adminSurface==='platform';
+    if(!platform)return window.renderCompanyPeople?.();
+    const [r,c,p]=await Promise.all([get('company-roles'),get('companies'),get('platform-roles')]);
+    const roles=[...p.map(x=>({...x,_scope:'PLATFORM'})),...r.map(x=>({...x,_scope:'COMPANY'}))];
+    document.getElementById('mt').textContent='Nuevo usuario';
+    const form=document.getElementById('form');
+    form.innerHTML=`<div class="formgrid"><div class="field"><label for="platform-user-name">Nombre</label><input id="platform-user-name" name="name" required></div><div class="field"><label for="platform-user-email">Correo</label><input id="platform-user-email" name="email" type="email" required></div><div class="field"><label for="platform-user-phone">Teléfono</label><input id="platform-user-phone" name="phone"></div><div class="field"><label for="platform-user-password">Contraseña</label><input id="platform-user-password" name="password" type="password" minlength="10" required autocomplete="new-password"></div><div class="field"><label for="platform-user-scope">Alcance</label><select id="platform-user-scope" name="scope"><option value="PLATFORM">PLATFORM</option><option value="COMPANY" selected>COMPANY</option></select></div><div class="field"><label for="platform-user-role">Rol</label><select id="platform-user-role" name="role_id" required>${roles.map(x=>`<option data-scope="${x._scope}" data-code="${esc(x.code)}" value="${x.id}">${esc(x.name)} · ${x._scope}</option>`).join('')}</select></div><div class="field"><label for="platform-user-company">Empresa</label><select id="platform-user-company" name="company_id"><option value="">Seleccionar empresa para usuario COMPANY</option>${c.map(x=>`<option value="${x.id}">${esc(x.legal_name)}</option>`).join('')}</select></div><fieldset data-bootstrap-fields hidden><legend>Exención bootstrap de administrador empresarial</legend><label><input name="bootstrap_exempt" type="checkbox" disabled> Registrar una exención explícita de regularización contractual</label><p>No elimina condiciones laborales ni bloqueos de cuenta. Solo plataforma puede registrarla y requiere motivo.</p><div class="field"><label for="platform-bootstrap-reason">Motivo de la exención</label><input id="platform-bootstrap-reason" name="bootstrap_exemption_reason" maxlength="2000" disabled></div></fieldset><div class="formactions"><button class="primary" type="submit">Crear usuario</button></div></div>`;
+    const scope=document.querySelector('#form [name="scope"]'),roleSelect=document.querySelector('#form [name="role_id"]'),companySelect=document.querySelector('#form [name="company_id"]');
+    const bootstrap=form.querySelector('[data-bootstrap-fields]'),check=form.querySelector('[name="bootstrap_exempt"]'),why=form.querySelector('[name="bootstrap_exemption_reason"]');
+    const syncBootstrap=()=>{
+      const current=[...roleSelect.options].find(option=>option.value===roleSelect.value);
+      const eligible=scope.value==='COMPANY'&&current?.dataset.code==='company_admin';
+      bootstrap.hidden=!eligible;check.disabled=!eligible;
+      if(!eligible){check.checked=false;why.value='';}
+      why.disabled=!eligible||!check.checked;why.required=eligible&&check.checked;
+    };
+    const sync=()=>{
+      const isP=scope.value==='PLATFORM';[...roleSelect.options].forEach(option=>option.hidden=option.dataset.scope!==(isP?'PLATFORM':'COMPANY'));
+      roleSelect.value=[...roleSelect.options].find(option=>!option.hidden)?.value||'';
+      companySelect.disabled=isP;companySelect.required=!isP;companySelect.value='';syncBootstrap();
+    };
+    scope.addEventListener('change',sync);roleSelect.addEventListener('change',syncBootstrap);check.addEventListener('change',syncBootstrap);sync();
+    document.getElementById('modal').classList.remove('hidden');
+    let saving=false;
+    form.onsubmit=async event=>{
+      event.preventDefault();if(saving)return;
+      const body=Object.fromEntries(new FormData(form));body.role_id=Number(body.role_id);body.company_id=body.company_id?Number(body.company_id):null;
+      delete body.bootstrap_exempt;delete body.bootstrap_exemption_reason;
+      if(!bootstrap.hidden&&check.checked){
+        if(!String(why.value||'').trim()){why.focus();return;}
+        body.bootstrap_exempt=true;body.bootstrap_exemption_reason=why.value.trim();
+      }
+      const submit=form.querySelector('button[type="submit"]');saving=true;submit.disabled=true;
+      try{const response=await fetch('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const payload=await response.json();if(!response.ok)throw Error(payload.error||'No se pudo crear el usuario');close();await users();}
+      catch(error){alert(error.message);}
+      finally{saving=false;submit.disabled=false;}
+    };
+  };
   window.toggleAdminUser=async(id,active)=>{if(!confirm(active?'¿Activar usuario?':'¿Desactivar usuario?'))return;try{await patch('users/'+id,{active});users()}catch(e){alert(e.message)}};
   window.toggleCompanyMembership=async(id,active)=>{
     if(window.adminSurface!=='company'||!/^[1-9]\d*$/.test(String(id)))return;
@@ -164,4 +220,44 @@
   async function settings(){const s=await get('admin/settings');const groups={};s.forEach(x=>(groups[x.category]??=[]).push(x));document.getElementById('admin-panel').innerHTML=Object.entries(groups).map(([cat,items])=>`<section class="admin-card settings-group"><div class="admin-section-head"><div><h3>${esc(cat.charAt(0).toUpperCase()+cat.slice(1))}</h3></div></div><div class="settings-list">${items.map(x=>{const v=x.value;const type=typeof v==='boolean'?'boolean':typeof v==='number'?'number':'text';return `<label><span><b>${esc(x.label)}</b><small>${esc(x.description||'')}</small></span><input data-setting="${esc(x.setting_key)}" data-type="${type}" value="${esc(typeof v==='string'?v.replace(/^"|"$/g,''):v)}" ${type==='boolean'?'type=checkbox '+(v?'checked':''):type==='number'?'type=number':''}></label>`}).join('')}<button class="primary" onclick="saveSettings()">Guardar cambios</button></div></section>`).join('')}
   window.saveSettings=async()=>{try{for(const el of document.querySelectorAll('[data-setting]')){let v;if(el.dataset.type==='boolean')v=el.checked;else if(el.dataset.type==='number')v=Number(el.value);else v=el.value;await patch('admin/settings/'+encodeURIComponent(el.dataset.setting),{value:v})}const s=await get('public/settings');const raw=s['appearance.company_name'];const name=typeof raw==='string'?raw.replace(/^"|"$/g,''):raw;applyBranding(name);alert('Configuración guardada');settings()}catch(e){alert(e.message)}};
   async function audit(){const a=await get('admin/audit');document.getElementById('admin-panel').innerHTML=`<div class="admin-card"><div class="admin-section-head"><div><h3>Auditoría</h3><p>Registro reciente de acciones del sistema.</p></div></div><div class="wrap"><table class="table"><thead><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Entidad</th><th>ID</th><th>IP</th></tr></thead><tbody>${a.map(x=>`<tr><td>${new Date(x.created_at).toLocaleString('es-CL')}</td><td>${esc(x.user_name||'Sistema')}</td><td>${esc(x.action)}</td><td>${esc(x.entity)}</td><td>${esc(x.entity_id||'—')}</td><td>${esc(x.ip||'—')}</td></tr>`).join('')||'<tr><td colspan="6">No hay eventos registrados.</td></tr>'}</tbody></table></div></div>`}
+  const platformUsers=users;
+  users=async function(){
+    if(window.adminSurface==='platform')return platformUsers();
+    if(typeof window.renderCompanyPeople!=='function')throw Error('No se pudo cargar Personas y accesos. Recarga la aplicación.');
+    return window.renderCompanyPeople();
+  };
+  function platformPersonnelExemptionAction(user){
+    if(adminIdentity?.actor_type!=='platform'||!adminIdentity.permissions?.includes('platform.users.manage')||user.modern_role_code!=='company_admin')return '';
+    const membershipId=/^[1-9]\d*$/.test(String(user.modern_membership_id))?String(user.modern_membership_id):null;
+    if(!membershipId){
+      const userId=/^[1-9]\d*$/.test(String(user.id))?String(user.id):null;
+      const companyId=/^[1-9]\d*$/.test(String(user.modern_company_id))?String(user.modern_company_id):null;
+      if(!userId||!companyId)return '<small>Exención laboral: requiere membership empresarial verificable.</small>';
+      return `<button class="smallbtn" onclick="resolvePersonnelPlatformExemption('${userId}','${companyId}',true)">Registrar exención laboral</button><button class="smallbtn" onclick="resolvePersonnelPlatformExemption('${userId}','${companyId}',false)">Retirar exención laboral</button>`;
+    }
+    return `<button class="smallbtn" onclick="personnelPlatformExemption('${membershipId}',true)">Registrar exención laboral</button><button class="smallbtn" onclick="personnelPlatformExemption('${membershipId}',false)">Retirar exención laboral</button>`;
+  }
+  window.resolvePersonnelPlatformExemption=async function(userId,companyId,exempt){
+    if(adminIdentity?.actor_type!=='platform'||!adminIdentity.permissions?.includes('platform.users.manage')||![userId,companyId].every(value=>/^[1-9]\d*$/.test(String(value))))return;
+    try{
+      const rows=await get('users/'+encodeURIComponent(userId)+'/memberships?company_id='+encodeURIComponent(companyId));
+      const matches=rows.filter(row=>String(row.company_id)===String(companyId)&&row.role_code==='company_admin'&&/^[1-9]\d*$/.test(String(row.id)));
+      if(matches.length!==1)throw Error('No se pudo verificar una membership única de administrador empresarial.');
+      window.personnelPlatformExemption(String(matches[0].id),exempt);
+    }catch(error){if(!error.stale)alert(error.message);}
+  };
+  window.personnelPlatformExemption=function(membershipId,exempt){
+    if(adminIdentity?.actor_type!=='platform'||!adminIdentity.permissions?.includes('platform.users.manage')||!/^[1-9]\d*$/.test(String(membershipId)))return;
+    document.getElementById('mt').textContent=exempt?'Registrar exención laboral':'Retirar exención laboral';
+    const form=document.getElementById('form');
+    form.innerHTML='<p>Solo aplica a la membership de administrador de empresa indicada. No elimina condiciones laborales ni otros bloqueos de acceso.</p><div class="field"><label for="personnelExemptionReason">Motivo obligatorio</label><input id="personnelExemptionReason" name="reason" required maxlength="2000"></div><p data-exemption-error role="alert" hidden></p><div class="formactions"><button class="primary" type="submit">Confirmar</button></div>';
+    document.getElementById('modal').classList.remove('hidden');
+    let saving=false;form.onsubmit=async event=>{
+      event.preventDefault();if(saving)return;const reason=String(new FormData(form).get('reason')||'').trim();if(!reason)return;
+      saving=true;const button=form.querySelector('button[type="submit"]');button.disabled=true;
+      try{const response=await fetch('/api/platform/personnel/'+encodeURIComponent(membershipId)+'/exemption',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({exempt,reason})});const data=await response.json();if(!response.ok)throw Error(data.error||'No se pudo registrar la exención');close();await users();}
+      catch(error){const box=form.querySelector('[data-exemption-error]');box.textContent=error.message;box.hidden=false;}
+      finally{saving=false;button.disabled=false;}
+    };
+  };
 })();

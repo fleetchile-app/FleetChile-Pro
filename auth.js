@@ -2,6 +2,8 @@ const crypto = require('crypto');
 const {writeAudit} = require('./audit');
 const {registerDriverUserAssignmentRoutes}=require('./driver-user-assignment');
 const {registerCompanyProfileRoutes}=require('./company-profile');
+const {registerPersonnelRoutes,createBootstrapExemption}=require('./personnel-api');
+const {loadEligibility,enforcePersonnelAccess}=require('./personnel-access');
 
 const clean = v => typeof v === 'string' ? v.trim() : v;
 const hashPassword = password => new Promise((resolve,reject) => {
@@ -42,11 +44,32 @@ async function userView(pool,userId){
     coalesce((select json_agg(json_build_object('id',um.id,'company_id',um.company_id,'active',um.active,'role_code',mr.code,'role_name',mr.name,'permissions',coalesce((select json_agg(p.code order by p.code) from role_permissions rp join permissions p on p.id=rp.permission_id where rp.role_id=um.role_id and p.scope='company'),'[]'::json))) from user_memberships um left join roles mr on mr.id=um.role_id where um.user_id=u.id and um.active=true),'[]'::json) memberships,
     coalesce((select json_agg(json_build_object('id',pm.id,'active',pm.active,'role_code',pr.code,'role_name',pr.name,'permissions',coalesce((select json_agg(p.code order by p.code) from role_permissions rp join permissions p on p.id=rp.permission_id where rp.role_id=pm.role_id and p.scope='platform'),'[]'::json))) from platform_memberships pm left join roles pr on pr.id=pm.role_id where pm.user_id=u.id and pm.active=true),'[]'::json) platform_memberships,
     coalesce((select json_agg(p.code order by p.code) from role_permissions rp join permissions p on p.id=rp.permission_id where rp.role_id=u.role_id),'[]'::json) legacy_permissions,
-    po.owner_type ownership_role,po.slot ownership_slot,po.active ownership_active,u.must_change_password
+    po.owner_type ownership_role,po.slot ownership_slot,po.active ownership_active,u.must_change_password,
+    (select jsonb_build_object(
+      'company_id',um0.company_id,
+      'policy',jsonb_build_object('enforced',coalesce((select pp.enforced from company_personnel_policies pp where pp.company_id=um0.company_id),true),'time_zone',coalesce((select pp.time_zone from company_personnel_policies pp where pp.company_id=um0.company_id),'America/Santiago'),'regularization_before',(select pp.regularization_before from company_personnel_policies pp where pp.company_id=um0.company_id)),
+      'regularization_eligible',case when p0.id is null and coalesce((select pp.enforced from company_personnel_policies pp where pp.company_id=um0.company_id),true)=false and (select pp.regularization_before from company_personnel_policies pp where pp.company_id=um0.company_id) is not null and um0.created_at<=(select pp.regularization_before from company_personnel_policies pp where pp.company_id=um0.company_id) and u.created_at<=(select pp.regularization_before from company_personnel_policies pp where pp.company_id=um0.company_id) then true else false end,
+      'person',case when p0.id is null then null else jsonb_build_object('id',p0.id,'user_id',p0.user_id,'membership_id',p0.membership_id,'driver_id',p0.driver_id,'name',p0.name,'rut',p0.rut,'birth_date',p0.birth_date,'job_title',p0.job_title,'contract_exempt',coalesce(p0.contract_exempt,false),'exemption_by',p0.exemption_by,'exemption_at',p0.exemption_at) end,
+      'membership',jsonb_build_object('active',um0.active,'role_code',r0.code),
+      'account_active',u.active,
+      'contracts',coalesce((select jsonb_agg(c) from person_contracts c where c.company_id=um0.company_id and c.person_id=p0.id),'[]'::jsonb),
+      'conditions',coalesce((select jsonb_agg(c) from person_conditions c where c.company_id=um0.company_id and c.person_id=p0.id),'[]'::jsonb),
+      'licenses',coalesce((select jsonb_agg(l) from person_driver_licenses l where l.company_id=um0.company_id and l.person_id=p0.id),'[]'::jsonb)
+    ) from (
+      select um.id,um.user_id,um.company_id,um.active,um.role_id,um.created_at,false legacy_membership
+      from user_memberships um where um.user_id=u.id
+      union all
+      select null::bigint,u.id,u.company_id,true,u.role_id,u.created_at,true
+      where u.company_id is not null and not exists(select 1 from user_memberships umx where umx.user_id=u.id)
+    ) um0 left join company_people p0 on p0.company_id=um0.company_id and (p0.user_id=u.id or p0.membership_id=um0.id) left join roles r0 on r0.id=um0.role_id order by um0.active desc,um0.id desc nulls last limit 1) personnel_state
     from users u left join roles lr on lr.id=u.role_id left join companies c on c.id=u.company_id left join platform_owners po on po.user_id=u.id and po.active=true where u.id=$1 and u.active=true`,[userId]);
   const row=r.rows[0];if(!row)return null;
   const effective=resolveEffectiveMembership(row);
-  return {...row,scope:effective.scope,company_id:effective.company_id,role_code:effective.role||row.role_code,role_name:effective.role?((effective.actor_type==='legacy'?row.role_name:null)||effective.role):row.role_name,permissions:effective.permissions, membership_id:effective.membership_id,platform_membership_id:effective.platform_membership_id,actor_type:effective.actor_type,context_reason:effective.reason,legacy_company_id:row.company_id,legacy_role_code:row.role_code,ownership_role:row.ownership_role||null,ownership_slot:row.ownership_slot||null,ownership_active:row.ownership_active===true};
+  const hasCompanyMembership=(row.memberships||[]).some(m=>m.active!==false)||row.personnel_state!==null&&row.personnel_state!==undefined;
+  const personnelState=effective.scope==='company'&&hasCompanyMembership?row.personnel_state:null;
+  const result={...row,scope:effective.scope,company_id:effective.company_id,role_code:effective.role||row.role_code,role_name:effective.role?((effective.actor_type==='legacy'?row.role_name:null)||effective.role):row.role_name,permissions:effective.permissions, membership_id:effective.membership_id,platform_membership_id:effective.platform_membership_id,actor_type:effective.actor_type,context_reason:effective.reason,legacy_company_id:row.company_id,legacy_role_code:row.role_code,ownership_role:row.ownership_role||null,ownership_slot:row.ownership_slot||null,ownership_active:row.ownership_active===true};
+  Object.defineProperty(result,'personnel_state',{value:personnelState,enumerable:false,configurable:false,writable:false});
+  return result;
 }
 
 async function userAuditView(db,userId){
@@ -108,6 +131,18 @@ function registerAuthRoutes(app,pool){
         await client.query('update users set last_login_at=now() where id=$1',[r.rows[0].id]);
         const user=await userView(client,r.rows[0].id);
         if(!user) throw new Error('Usuario no disponible después de autenticar');
+        if(user.scope==='company'&&user.company_id){
+          const hasCompanyMembership=(user.memberships||[]).some(m=>m.active!==false);
+          if(hasCompanyMembership&&!user.personnel_state)throw new Error('Snapshot de personal ausente para membership empresarial');
+          if(!user.personnel_state){await client.query('COMMIT');res.json({token:raw,user});return;}
+          const snapshot=user.personnel_state;
+          if(!snapshot?.policy||!Object.hasOwn(snapshot,'person'))throw new Error('Snapshot de personal ausente o inválido');
+          const eligibility=await loadEligibility(client,{companyId:user.company_id,userId:user.id,snapshot,now:new Date(),lock:Boolean(snapshot.policy.enforced||snapshot.person)});
+          if(!eligibility.allowed){
+            await client.query('ROLLBACK');
+            return res.status(403).json({code:'PERSONNEL_ACCESS_BLOCKED',error:'Acceso bloqueado por regularización de personal'});
+          }
+        }
         await client.query('COMMIT');
         res.json({token:raw,user});
       } catch {
@@ -160,7 +195,7 @@ function registerAuthRoutes(app,pool){
     const r=(await db.query('select id,code,name from roles where id=$1',[roleId])).rows[0];
     if(!r) return null;
     const platformRole=new Set(['platform_superadmin']).has(r.code);
-    const companyRole=new Set(['company_admin','manager','operations','maintenance','driver','viewer']).has(r.code);
+    const companyRole=new Set(['company_admin','manager','operations','maintenance','driver','viewer','administrative']).has(r.code);
     return (scope==='platform'?platformRole:companyRole)?r:null;
   };
   const membershipTargetCompany = (context,requested) => {
@@ -169,6 +204,7 @@ function registerAuthRoutes(app,pool){
     return requested||null;
   };
   const companyUserTarget = async (db,userId,companyId) => (await db.query(`select u.id,
+    exists(select 1 from company_people cp where cp.company_id=$2 and (cp.user_id=u.id or cp.membership_id in (select um0.id from user_memberships um0 where um0.user_id=u.id and um0.company_id=$2))) has_personnel_profile,
     exists(select 1 from user_memberships other where other.user_id=u.id and other.active=true and other.company_id<>$2) shared_company,
     exists(select 1 from platform_memberships pm where pm.user_id=u.id and pm.active=true) active_platform
     from users u where u.id=$1 and (
@@ -203,7 +239,7 @@ function registerAuthRoutes(app,pool){
       const company=(await client.query('select id from companies where id=$1 and active=true',[cid])).rows[0];if(!company)throw Object.assign(new Error(),{status:404,message:'Empresa no encontrada'});const role=await roleForScope(client,req.body?.role_id,'company');if(!role)throw Object.assign(new Error(),{status:400,message:'Rol de empresa no válido'});const r=await client.query('insert into user_memberships(user_id,company_id,role_id,active) values($1,$2,$3,$4) returning *',[req.params.id,cid,role.id,req.body?.active!==false]);await writeAudit(client,req,{companyId:cid,action:'create',entity:'user_membership',entityId:r.rows[0].id,afterData:r.rows[0]});await client.query('COMMIT');res.status(201).json(r.rows[0]);}catch(e){await client.query('ROLLBACK');res.status(e.status||400).json({error:e.message||'No se pudo crear la membership'});}finally{client.release();}
   });
   app.patch('/api/user-memberships/:id',... [authMiddleware.bind(null,pool),membershipActor,preventSelfMembershipMutation('user_memberships')],async(req,res)=>{
-    const client=await pool.connect();try{await client.query('BEGIN');const before=(await client.query('select * from user_memberships where id=$1 for update',[req.params.id])).rows[0];if(!before){await client.query('ROLLBACK');return res.sendStatus(404)}if(req.actorContext.actor_type==='company'&&before.company_id!==req.actorContext.company_id){await client.query('ROLLBACK');return res.sendStatus(403)}const role=req.body?.role_id===undefined?{id:before.role_id}:await roleForScope(client,req.body.role_id,'company');if(!role)throw new Error('Rol de empresa no válido');const active=req.body?.active===undefined?before.active:!!req.body.active;const r=await client.query('update user_memberships set role_id=$1,active=$2,updated_at=now() where id=$3 returning *',[role.id,active,req.params.id]);await writeAudit(client,req,{companyId:before.company_id,action:before.role_id!==role.id?'role_change':active!==before.active?(active?'activate':'deactivate'):'update',entity:'user_membership',entityId:req.params.id,beforeData:before,afterData:r.rows[0]});await client.query('COMMIT');res.json(r.rows[0]);}catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message||'No se pudo actualizar la membership'});}finally{client.release();}
+    const client=await pool.connect();try{await client.query('BEGIN');const before=(await client.query(`select um.*,exists(select 1 from company_people cp where cp.company_id=um.company_id and (cp.membership_id=um.id or cp.user_id=um.user_id)) has_personnel_profile from user_memberships um where um.id=$1 for update`,[req.params.id])).rows[0];if(!before){await client.query('ROLLBACK');return res.sendStatus(404)}if(req.actorContext.actor_type==='company'&&before.company_id!==req.actorContext.company_id){await client.query('ROLLBACK');return res.sendStatus(403)}if(before.has_personnel_profile===true&&(req.body?.role_id!==undefined||req.body?.active!==undefined)){await client.query('ROLLBACK');return res.status(409).json({code:'PERSONNEL_ROUTE_REQUIRED',error:'Los cambios de rol y acceso de personal registrado deben hacerse desde Personas y accesos'});}const role=req.body?.role_id===undefined?{id:before.role_id}:await roleForScope(client,req.body.role_id,'company');if(!role)throw new Error('Rol de empresa no válido');const active=req.body?.active===undefined?before.active:!!req.body.active;const r=await client.query('update user_memberships set role_id=$1,active=$2,updated_at=now() where id=$3 returning *',[role.id,active,req.params.id]);await writeAudit(client,req,{companyId:before.company_id,action:before.role_id!==role.id?'role_change':active!==before.active?(active?'activate':'deactivate'):'update',entity:'user_membership',entityId:req.params.id,beforeData:before,afterData:r.rows[0]});await client.query('COMMIT');res.json(r.rows[0]);}catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message||'No se pudo actualizar la membership'});}finally{client.release();}
   });
   app.post('/api/users/:id/platform-membership',... [authMiddleware.bind(null,pool),membershipActor],async(req,res)=>{
     if(req.actorContext.actor_type!=='platform')return res.status(403).json({error:'Solo plataforma puede administrar memberships de plataforma'});const client=await pool.connect();try{await client.query('BEGIN');const role=await roleForScope(client,req.body?.role_id,'platform');if(!role)throw new Error('Rol de plataforma no válido');const r=await client.query('insert into platform_memberships(user_id,role_id,active) values($1,$2,$3) returning *',[req.params.id,role.id,req.body?.active!==false]);await writeAudit(client,req,{companyId:null,action:'create',entity:'platform_membership',entityId:r.rows[0].id,afterData:r.rows[0]});await client.query('COMMIT');res.status(201).json(r.rows[0]);}catch(e){await client.query('ROLLBACK');res.status(400).json({error:e.message||'No se pudo crear la membership de plataforma'});}finally{client.release();}
@@ -259,6 +295,7 @@ function registerAuthRoutes(app,pool){
       if(!context||context.actor_type==='unresolved')return res.status(403).json({error:'Contexto empresarial requerido'});
       const legacy=context.actor_type==='legacy'&&context.role==='admin';
       const companyId=context.actor_type==='legacy'?(b.company_id||context.company_id||null):context.scope==='platform'?(b.company_id||null):context.company_id;
+      if(legacy&&companyId){await client.query('ROLLBACK');return res.status(409).json({code:'PERSONNEL_ROUTE_REQUIRED',error:'Las nuevas cuentas empresariales deben crearse desde Personas y accesos'});}
       const role=(await client.query('select id,code from roles where id=$1',[b.role_id])).rows[0];
       if(!role) throw new Error('Rol no encontrado');
       const platformRole=role.code==='platform_superadmin'||role.code.startsWith('platform_');
@@ -275,7 +312,11 @@ function registerAuthRoutes(app,pool){
       } else if(!platformRole && companyId && context.actor_type!=='legacy') {
         const companyRole=await roleForScope(client,role.id,'company');
         if(!companyRole) throw new Error('El rol no es compatible con una membership de empresa');
-        await client.query('insert into user_memberships(user_id,company_id,role_id,active) values($1,$2,$3,true)',[r.rows[0].id,companyId,role.id]);
+        const membership=(await client.query('insert into user_memberships(user_id,company_id,role_id,active) values($1,$2,$3,true) returning id',[r.rows[0].id,companyId,role.id])).rows[0];
+        if(b.bootstrap_exempt===true){
+          if(context.scope!=='platform'||role.code!=='company_admin'||!String(b.bootstrap_exemption_reason||'').trim())throw new Error('La exención bootstrap requiere plataforma, company_admin y motivo');
+          await createBootstrapExemption(client,{membershipId:membership.id,actor:req.user,reason:b.bootstrap_exemption_reason});
+        }
       }
       const user=await userView(client,r.rows[0].id);
       if(!user) throw new Error('No se pudo obtener el usuario creado');
@@ -304,6 +345,10 @@ function registerAuthRoutes(app,pool){
       const companyActor=context.actor_type==='company';
       const locked=companyActor?await companyUserTarget(client,req.params.id,targetCompany):(await client.query('select id from users where id=$1 and ($2=true or company_id=$3) for update',[req.params.id,isAdmin||global,targetCompany])).rows[0];
       if(!locked){await client.query('ROLLBACK');return res.sendStatus(404);}
+      if(b.role_id!==undefined&&platform){
+        const prof=(await client.query('select 1 from company_people where user_id=$1 limit 1 for update',[req.params.id])).rows[0];
+        if(prof){await client.query('ROLLBACK');return res.status(409).json({code:'PERSONNEL_ROUTE_REQUIRED',error:'El rol de personal registrado debe cambiarse desde Personas y accesos'});}
+      }
       if(companyActor&&(locked.shared_company||locked.active_platform)){await client.query('ROLLBACK');return res.status(403).json({error:'No puedes editar la identidad global de una cuenta compartida con otra empresa o con plataforma'});}
       const before=await userAuditView(client,locked.id);
       if(!before) throw new Error('No se pudo obtener el usuario antes de actualizar');
@@ -335,6 +380,9 @@ function registerAuthRoutes(app,pool){
       res.status(400).json({error:'No se pudo actualizar el usuario'});
     } finally {client.release();}
   });
+  const personnelApp={};
+  for(const method of ['get','post','patch','put','delete'])personnelApp[method]=(path,...handlers)=>app[method](path,authMiddleware.bind(null,pool),...handlers);
+  registerPersonnelRoutes(personnelApp,pool,{resolveActorContext,requirePermission,isPlatformOwner,hashPassword,reauthenticateUser});
 }
 async function reauthenticateUser(pool,userId,password){
   if(!userId||typeof password!=='string'||!password)return false;
@@ -354,7 +402,17 @@ async function authMiddleware(pool,req,res,next){
     if(!company.rowCount)return res.status(403).json({error:'Empresa no encontrada'});
     user.active_company_context=companyId;
   }
-  req.user=user;next();
+  req.user=user;
+  if(user.scope==='company'&&user.company_id){
+    const hasCompanyMembership=(user.memberships||[]).some(m=>m.active!==false);
+    if(hasCompanyMembership&&!user.personnel_state)return res.status(500).json({error:'No se pudo validar el estado laboral'});
+    if(!user.personnel_state){next();return;}
+    if(!user.personnel_state.policy||!Object.hasOwn(user.personnel_state,'person'))return res.status(500).json({error:'No se pudo validar el estado laboral'});
+    const personnel=await enforcePersonnelAccess(pool,req);
+    req.personnelAccess=personnel;
+    if(!personnel.allowed)return res.status(403).json({code:'PERSONNEL_ACCESS_BLOCKED',error:'Acceso bloqueado por regularización de personal'});
+  }
+  next();
 }
 
 function requirePermission(code){return (req,res,next)=>{if(!req.user)return res.status(401).json({error:'Autenticación requerida'});const legacy=req.user.role_code==='admin'&&!req.user.membership_id&&!req.user.platform_membership_id;if(isPlatformOwner(req.user)||legacy||(req.user.permissions||[]).includes(code))return next();res.status(403).json({error:`Permiso requerido: ${code}`});};}

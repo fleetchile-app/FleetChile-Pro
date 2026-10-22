@@ -286,10 +286,9 @@ test('POST usuarios impide que un usuario empresarial cree un admin',async()=>{
 test('POST usuarios conserva la capacidad del admin transversal para crear admin',async()=>{
   const pool=usersPool({roleCode:'admin'});const app=fakeApp();registerAuthRoutes(app,pool);
   const {res}=await invokeFinal(app.route('post','/api/users'),{user:{id:1,role_code:'admin',company_id:null,permissions:[]},body:{name:'Admin',email:'admin2@example.test',password:'clave-segura-123',role_id:1,company_id:20}});
-  assert.equal(res.statusCode,201);
-  assert.deepEqual(pool.calls.map(x=>x.label),['BEGIN','ROLE','INSERT_USER','USER_VIEW','AUDIT','COMMIT']);
-  assert.equal(pool.calls.find(x=>x.label==='INSERT_USER').values[0],20);
-  assert.equal(pool.calls.find(x=>x.label==='AUDIT').values[0],20);
+  assert.equal(res.statusCode,409);
+  assert.equal(res.payload.code,'PERSONNEL_ROUTE_REQUIRED');
+  assert.deepEqual(pool.calls.map(x=>x.label),['BEGIN','ROLLBACK']);
 });
 
 test('PATCH usuarios bloquea, conserva BEFORE/AFTER seguros, audita y confirma',async()=>{
