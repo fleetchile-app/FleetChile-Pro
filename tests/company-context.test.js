@@ -64,7 +64,7 @@ test('6-D exige permiso de cambio y limpia contexto al autenticar/logout',()=>{
   assert.match(auth,/platform\.context\.switch/);
   assert.match(auth,/requestedContext&&user\.actor_type!==['"]platform['"]/);
   assert.match(frontend,/localStorage\.removeItem\('fleet_company_context'\)/);
-  assert.match(frontend,/async logout\(\)[\s\S]*fleet_company_context/);
+  assert.match(frontend,/async logout\([^)]*\)[\s\S]*localStorage\.removeItem\('fleet_company_context'\)/);
 });
 
 test('6-E audita el cambio de contexto después de validar la empresa',()=>{

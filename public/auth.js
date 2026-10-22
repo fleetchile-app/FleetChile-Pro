@@ -6,7 +6,7 @@ const Auth={
  async setup(payload){return this.request('/api/auth/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})},
  async me(){if(!this.token)throw Object.assign(new Error('No autenticado'),{status:401});const data=await this.request('/api/auth/me');this.user=data.user;return data.user},
  async changePassword(current_password,new_password,confirm_password){return this.request('/api/auth/change-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_password,new_password,confirm_password})})},
- async logout(){window.stopControlDashboard?.();window.leaveAdminView?.();window.renderAdminNavigation?.(null);try{await this.request('/api/auth/logout',{method:'POST'})}catch{}this.token='';this.user=null;localStorage.removeItem('fleet_token');localStorage.removeItem('fleet_company_context')}
+ async logout({signal}={}){window.stopControlDashboard?.();window.leaveAdminView?.();window.renderAdminNavigation?.(null);let remoteRevoked=false;try{await this.request('/api/auth/logout',{method:'POST',signal});remoteRevoked=true}catch{}this.token='';this.user=null;localStorage.removeItem('fleet_token');localStorage.removeItem('fleet_company_context');return {remoteRevoked}}
 };
 if(document.addEventListener)document.addEventListener('change',event=>{const select=event.target;if(select?.id!=='companyContextSelect')return;const previous=localStorage.getItem('fleet_company_context')||'';if(!confirm(select.value?'¿Confirmar cambio de empresa?':'¿Volver a Plataforma Global?')){event.stopImmediatePropagation();select.value=previous}},true);
 window.Auth=Auth;

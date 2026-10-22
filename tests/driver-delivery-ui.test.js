@@ -5,7 +5,7 @@ const path=require('node:path');
 const vm=require('node:vm');
 
 // Ejecuta el script real con una superficie DOM mínima y sin servicios externos.
-function deliverySurface({geolocation,failPost=false,load={id:8,cargo:'Carga de prueba'},drawn=true,storage=new Map(),user={id:1,company_id:10,driver_id:4},fetchDelivery,unavailableStorage=false}={}){
+function deliverySurface({geolocation,failPost=false,load={id:8,cargo:'Carga de prueba'},drawn=true,storage=new Map(),user={id:1,company_id:10,driver_id:4},fetchDelivery,unavailableStorage=false,readerClass}={}){
   const elements=new Map();
   for(const selector of ['.delivery-photo','.delivery-preview','.clear-signature','.submit-delivery','.delivery-error','.signature-host','.driver-hint']){
     elements.set(selector,{hidden:true,disabled:false,files:[],append(){}});
@@ -19,7 +19,7 @@ function deliverySurface({geolocation,failPost=false,load={id:8,cargo:'Carga de 
   const navigator=geolocation?{geolocation}:{};
   const sandbox={
     document:{getElementById:()=>({querySelector:()=>null}),createElement:tag=>tag==='canvas'?canvas:card},
-    window:{},navigator,Auth:{user},crypto:{randomUUID:()=> `submission-de-prueba-${++sequence}`},
+    window:{},navigator,Auth:{user},FileReader:readerClass,crypto:{randomUUID:()=> `submission-de-prueba-${++sequence}`},
     sessionStorage:{getItem:key=>{if(unavailableStorage)throw Error('Storage bloqueado');return storage.get(key)||null},setItem:(key,value)=>{if(unavailableStorage)throw Error('Storage bloqueado');storage.set(key,value)},removeItem:key=>{if(unavailableStorage)throw Error('Storage bloqueado');storage.delete(key)}},
     async fetch(url,options){
       calls.push({url,payload:JSON.parse(options.body)});
@@ -28,7 +28,7 @@ function deliverySurface({geolocation,failPost=false,load={id:8,cargo:'Carga de 
     }
   };
   const source=fs.readFileSync(path.join(__dirname,'..','public','driver.js'),'utf8');
-  vm.runInNewContext(source.replace(/\}\)\(\);\s*$/,'window.testDeliveryForm=deliveryForm;})();'),sandbox);
+  vm.runInNewContext(source.replace(/\}\)\(\);\s*$/,'window.testDeliveryForm=deliveryForm;window.testEndSession=()=>sessionVersion++;window.testEndView=()=>viewVersion++;})();'),sandbox);
   // La firma se dibuja fuera del alcance de estas pruebas de envío y ubicación.
   const open=(selectedLoad=load,tripId=7)=>{
     const form=sandbox.window.testDeliveryForm(tripId,selectedLoad);
@@ -36,7 +36,7 @@ function deliverySurface({geolocation,failPost=false,load={id:8,cargo:'Carga de 
     return form;
   };
   open();
-  return {calls,elements,navigator,storage,open,submit:()=>elements.get('.submit-delivery').onclick()};
+  return {calls,elements,navigator,storage,open,endSession:sandbox.window.testEndSession,endView:sandbox.window.testEndView,submit:()=>elements.get('.submit-delivery').onclick()};
 }
 
 async function submitWithoutBlocking(surface){
@@ -53,6 +53,33 @@ test('POD no modifica la API nativa de geolocalización',()=>{
   const getCurrentPosition=()=>{};
   const surface=deliverySurface({geolocation:{getCurrentPosition}});
   assert.equal(surface.navigator.geolocation.getCurrentPosition,getCurrentPosition);
+});
+
+test('POD no se envía si la sesión cambia mientras espera ubicación',async()=>{
+  let located;
+  const surface=deliverySurface({geolocation:{getCurrentPosition(success){located=success}}});
+  const pending=surface.submit();
+  surface.endSession();
+  located({coords:{latitude:-33.45,longitude:-70.66}});
+  await pending;
+  assert.equal(surface.calls.length,0);
+});
+
+test('POD no se envía al abandonar formulario mientras espera ubicación',async()=>{
+  let located;
+  const surface=deliverySurface({geolocation:{getCurrentPosition(success){located=success}}});
+  const pending=surface.submit();surface.endView();
+  located({coords:{latitude:-33.45,longitude:-70.66}});await pending;
+  assert.equal(surface.calls.length,0);
+});
+
+test('POD no se envía si se cierra sesión mientras lee la fotografía',async()=>{
+  let reader;
+  const surface=deliverySurface({readerClass:class{constructor(){reader=this}readAsDataURL(){}}});
+  surface.elements.get('.delivery-photo').files=[{name:'foto.jpg'}];
+  const pending=surface.submit();surface.endSession();
+  reader.result='data:image/jpeg;base64,prueba';reader.onload();await pending;
+  assert.equal(surface.calls.length,0);
 });
 
 test('POD envía la entrega cuando obtiene ubicación',async()=>{
