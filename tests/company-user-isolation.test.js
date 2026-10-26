@@ -17,7 +17,6 @@ function harness(actor=company(),steps=[]){
     calls.push({sql,values});
     try{
       if(sql.startsWith('select s.user_id from user_sessions'))return result([{user_id:1}]);
-      if(sql.startsWith('select 1 from company_people where user_id='))return result([]);
       if(sql.includes('po.owner_type ownership_role')&&values[0]===1)return result(actor?[actor]:[]);
       if(sql.startsWith('update user_sessions set last_seen_at'))return result([]);
       const step=steps.shift();assert.ok(step,`Unexpected SQL: ${sql}`);
@@ -140,10 +139,17 @@ test('PATCH private own identity works with legacy company mismatch and audits A
 });
 for(const [name,actor,cid] of [['platform',platform,null],['legacy',legacy,10]])test(`PATCH ${name} retains global active and role mutation flow`,async()=>{
   const user={id:42,company_id:20};
-  const h=harness(actor(),[begin(),{sql:/^select id from users where id=\$1 and \(\$2=true or company_id=\$3\) for update$/,values:['42',true,cid],rows:[{id:42}]},view([user]),
+  const h=harness(actor(),[begin(),{sql:/^select id from users where id=\$1 and \(\$2=true or company_id=\$3\) for update$/,values:['42',true,cid],rows:[{id:42}]},
+    ...(name==='platform'?[{sql:/^select 1 from company_people where user_id=\$1 limit 1 for update$/,values:['42'],rows:[]}]:[]),view([user]),
     {sql:/^select id,code from roles/,values:[5],rows:[{id:5,code:'manager'}]},
     {sql:/^update users set role_id=\$1,active=\$2/,values:[5,false,'42',true,cid],rows:[{id:42}]},view([user]),responseView(),audit(20),commit()]);
   assert.equal((await h.invoke('patch','/api/users/:id',{role_id:5,active:false})).statusCode,200);
+});
+test('PATCH global platform cannot change role of registered personnel through global identity',async()=>{
+  const h=harness(platform(),[begin(),{sql:/^select id from users where id=\$1/,values:['42',true,null],rows:[{id:42}]},
+    {sql:/^select 1 from company_people where user_id=\$1 limit 1 for update$/,values:['42'],rows:[{'?column?':1}]},rollback()]);
+  const r=await h.invoke('patch','/api/users/:id',{role_id:5});assert.equal(r.statusCode,409);assert.equal(r.payload.code,'PERSONNEL_ROUTE_REQUIRED');
+  assert.equal(h.calls.some(c=>c.sql.startsWith('update users set')),false);assert.equal(h.released,1);
 });
 const selfCheck=userId=>({sql:/^select user_id from user_memberships where id=\$1$/,values:['42'],rows:[{user_id:userId}]});
 const lockMembership=companyId=>({sql:/^select .*from user_memberships .*where um\.id=\$1 for update$/,values:['42'],rows:[{id:42,user_id:2,company_id:companyId,role_id:4,active:false,has_personnel_profile:false}]});

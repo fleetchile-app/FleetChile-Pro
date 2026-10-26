@@ -63,7 +63,7 @@ test('desplegable abre sin consultar API ni cambiar empresa; Escape cierra y dev
  assert.equal(s.elements.platformAdminLinks.hidden,false);assert.equal(s.elements.platformAdminToggle.attrs['aria-expanded'],'true');assert.equal(s.requests.length,before);
  s.events.keydown({key:'Escape'});assert.equal(s.elements.platformAdminLinks.hidden,true);assert.equal(s.elements.platformAdminToggle.focused,1);
  s.context.togglePlatformAdminMenu(true);s.events.click({target:{}});assert.equal(s.elements.platformAdminLinks.hidden,true);
- assert.doesNotMatch(source,/localStorage\.setItem|company-context/);
+ assert.equal(s.requests.some(request=>request.url==='/api/auth/company-context'),false);
 });
 
 test('cada acceso superior abre el destino solicitado y mantiene título, selección y clics repetidos',async()=>{

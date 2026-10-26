@@ -198,9 +198,64 @@ test('asociación se conserva en filas de conductor con y sin perfil y nunca cre
   await s.click('regularize',{row:'2'});assert.match(s.root.innerHTML,/Primero asocia la ficha/);await s.click('associate-driver',{user:'73'});assert.deepEqual(associated,['71','73','73']);
 });
 
-test('plataforma owner sin permisos empresariales explícitos no obtiene menú Personas',()=>{
+test('plataforma cualificada con empresa seleccionada obtiene menú explícito de soporte',()=>{
   const s=surface({user:{actor_type:'platform',platform_membership_id:1,ownership_role:'primary',ownership_active:true,permissions:['platform.users.manage']}});
-  s.state.localStorage.getItem=()=> '10';s.loadAdmin();assert.equal(s.nav.children.find(button=>button.dataset.v==='companyPeople').hidden,true);
+  s.state.localStorage.getItem=()=> '10';s.loadAdmin();const button=s.nav.children.find(button=>button.dataset.v==='companyPeople');assert.equal(button.hidden,false);assert.match(button.innerHTML,/Soporte/);assert.match(button.innerHTML,/^<i aria-hidden="true"><svg/);
+});
+
+function supportSurface(options={}){
+  const s=surface({...options,user:{actor_type:'platform',platform_membership_id:1,permissions:['platform.users.manage'],...options.user}});
+  s.state.localStorage.getItem=()=> '10';return s;
+}
+test('soporte exige contexto y capacidad real, no nombres de rol ni permisos de empresas',async()=>{
+  for(const user of [{permissions:['platform.companies.manage']},{permissions:[],ownership_role:'primary',ownership_active:false},{permissions:[],role_code:'owner'}]){
+    const s=supportSurface({user});s.loadAdmin();assert.equal(s.nav.children.find(button=>button.dataset.v==='companyPeople').hidden,true);
+    await s.state.companyPeople();assert.equal(s.calls.some(call=>call.url.includes('/company/people')),false);
+  }
+  const s=supportSurface();s.state.localStorage.getItem=()=>null;s.loadAdmin();assert.equal(s.nav.children.find(button=>button.dataset.v==='companyPeople').hidden,true);
+});
+test('owner verificado sin permisos sintéticos puede abrir soporte y mantiene identidad',async()=>{
+  const s=supportSurface({user:{permissions:[],ownership_role:'primary',ownership_active:true}});await s.state.companyPeople();
+  assert.match(s.root.innerHTML,/Soporte de plataforma/);assert.match(s.root.innerHTML,/Empresa A/);assert.match(s.nodes.title.textContent,/Soporte plataforma/);
+  assert.equal(s.state.Auth.user.actor_type,'platform');assert.deepEqual(s.state.Auth.user.permissions,[]);
+  assert.equal(new URLSearchParams(s.calls.find(call=>call.url.includes('/people?')).url.split('?')[1]).has('role'),false);
+});
+test('abrir usuario usa filtro exacto y abre ficha existente sin altas duplicadas',async()=>{
+  const person=ficha();person.person.user_id='71';person.account={id:'71',name:'Ana <script>',email:'ana@example.test',phone:'123',can_edit_identity:true};
+  const s=supportSurface({person});
+  await s.state.openCompanyPersonForUser('71');
+  assert.ok(s.calls.some(call=>call.url==='/api/company/people?user_id=71&page_size=25'));
+  assert.match(s.root.innerHTML,/data-form="account-details"/);assert.match(s.root.innerHTML,/Ana &lt;script&gt;/);assert.equal(posts(s).length,0);
+  await s.submit('account-details',{name:' Ana ',email:' a@example.test ',phone:' 123 ',password:'',reason:'Corrección',role_id:'1',active:true,company_id:'20'});
+  const call=posts(s)[0];assert.equal(call.url,'/api/users/71');assert.equal(call.options.method,'PATCH');
+  assert.deepEqual(JSON.parse(call.options.body),{name:'Ana',email:'a@example.test',phone:'123',reason:'Corrección'});
+});
+test('contraseña opcional se envía solo al cambiarla y errores de cuenta quedan visibles',async()=>{
+  const person=ficha();person.person.user_id='71';person.account={id:'71',name:'Ana',email:'a@example.test',can_edit_identity:true};
+  const s=supportSurface({person,fetcher:(url,options)=>url==='/api/users/71'&&options.method?{error:'Cuenta compartida: operación no permitida'}:undefined});
+  await s.state.openCompanyPersonForUser('71');
+  const f=await s.submit('account-details',{name:'Ana',email:'a@example.test',phone:'',password:'nueva-clave-segura',reason:'Reestablecer'});
+  assert.equal(JSON.parse(posts(s)[0].options.body).password,'nueva-clave-segura');assert.match(f.querySelector('[data-error]').textContent,/Cuenta compartida/);
+});
+test('usuario sin perfil regulariza membership exacta, nunca crea otra cuenta automáticamente',async()=>{
+  const s=supportSurface();await s.state.openCompanyPersonForUser('72');assert.match(s.root.innerHTML,/Regularizar/);
+  await s.submit('wizard',{name:'Pendiente',rut:'12345678-5',birth_date:'1990-01-01'});await s.submit('wizard',{contract_type:'indefinite',contract_start:'2026-01-01'});await s.submit('wizard',{});await s.submit('wizard',{});
+  const payload=JSON.parse(posts(s)[0].options.body);assert.equal(payload.membership_id,'82');assert.equal(payload.create_account,false);assert.equal(Object.hasOwn(payload,'password'),false);
+});
+test('respuesta sin usuario exacto o con duplicados no abre ni crea ficha',async()=>{
+  for(const rows of [[],[{id:'11',user_id:'999'}],[defaultRows[0],defaultRows[0]]]){
+    const s=supportSurface({fetcher:url=>url.includes('user_id=71')?{rows}:undefined});await s.state.openCompanyPersonForUser('71');
+    assert.equal(s.calls.some(call=>call.url==='/api/company/people/11'),false);assert.equal(posts(s).length,0);
+  }
+});
+test('soporte no pinta datos cuando el servidor declara otro contexto',async()=>{
+  const s=supportSurface({payload:{...list(),context_company_id:20}});await s.state.companyPeople();assert.doesNotMatch(s.root.innerHTML,/Ana &lt;script&gt;/);
+});
+test('cuenta compartida, privilegiada o no vinculada no ofrece edición básica',async()=>{
+  for(const account of [{id:'71',can_edit_identity:false},{id:'999',can_edit_identity:true},null]){
+    const person=ficha();person.person.user_id='71';person.account=account;const s=supportSurface({person});await s.state.openCompanyPersonForUser('71');
+    assert.doesNotMatch(s.root.innerHTML,/data-form="account-details"/);assert.equal(posts(s).length,0);
+  }
 });
 
 test('administrative redirige solo una vez desde dashboard inicial sin apropiarse de otra vista',async()=>{

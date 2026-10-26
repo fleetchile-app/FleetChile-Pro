@@ -1,6 +1,7 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {registerOperationsRoutes}=require('../operations-api');
+const {registerOperationsRoutes: registerOperationsRoutesImpl}=require('../operations-api');
+const registerOperationsRoutes=(app,pool,options={})=>registerOperationsRoutesImpl(app,pool,{assertTripResourcesReady:async()=>{},...options});
 
 function fakeApp(){const routes=[];for(const method of ['get','post','patch'])routes[method]=(path,...handlers)=>routes.push({method,path,handlers});routes.route=(method,path)=>{const route=routes.find(item=>item.method===method&&item.path===path);assert.ok(route,`Ruta no registrada: ${method.toUpperCase()} ${path}`);return route};return routes}
 function response(){return {statusCode:200,payload:undefined,status(code){this.statusCode=code;return this},json(value){this.payload=value;return this},sendStatus(code){this.statusCode=code;return this}}}

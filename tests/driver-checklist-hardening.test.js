@@ -1,6 +1,7 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {registerOperationsRoutes}=require('../operations-api');
+const {registerOperationsRoutes: registerOperationsRoutesImpl}=require('../operations-api');
+const registerOperationsRoutes=(app,pool,options={})=>registerOperationsRoutesImpl(app,pool,{assertTripResourcesReady:async()=>{},...options});
 const {registerFleetRoutes}=require('../fleet-api');
 function app(){const routes=[];for(const m of ['get','post','patch'])routes[m]=(p,...h)=>routes.push({method:m,path:p,handlers:h});routes.route=(m,p)=>routes.find(x=>x.method===m&&x.path===p);return routes}
 function response(){return {statusCode:200,payload:null,status(c){this.statusCode=c;return this},json(v){this.payload=v;return this},sendStatus(c){this.statusCode=c;return this}}}

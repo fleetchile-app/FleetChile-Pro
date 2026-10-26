@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const {promisify} = require('node:util');
 const {authMiddleware,registerAuthRoutes} = require('../auth');
-const {registerOperationsRoutes} = require('../operations-api');
+const {registerOperationsRoutes: registerOperationsRoutesImpl} = require('../operations-api');
+const registerOperationsRoutes = (app,pool,options={}) => registerOperationsRoutesImpl(app,pool,{assertTripResourcesReady:async()=>{},...options});
 const {registerFleetRoutes} = require('../fleet-api');
 
 function fakeApp(){

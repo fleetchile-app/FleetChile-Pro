@@ -163,7 +163,7 @@ function registerAuthRoutes(app,pool){
 
   app.post('/api/auth/company-context',authMiddleware.bind(null,pool),async(req,res)=>{
     if(req.user.actor_type!=='platform'||!req.user.platform_membership_id)return res.status(403).json({error:'Solo un administrador de plataforma puede seleccionar empresa'});
-    if(!(req.user.permissions||[]).includes('platform.context.switch'))return res.status(403).json({error:'Permiso de cambio de contexto requerido'});
+    if(!isPlatformOwner(req.user)&&!(req.user.permissions||[]).some(p=>p==='platform.context.switch'||p==='platform.users.manage'))return res.status(403).json({error:'Permiso de cambio de contexto requerido'});
     const companyId=Number(req.body?.company_id);
     if(!Number.isInteger(companyId)||companyId<1)return res.status(400).json({error:'Empresa no válida'});
     const company=(await pool.query('select id,legal_name from companies where id=$1 and active=true',[companyId])).rows[0];
@@ -330,6 +330,61 @@ function registerAuthRoutes(app,pool){
   });
   app.patch('/api/users/:id',...protectedUserRoutes,async(req,res)=>{
     const b=req.body||{};
+    if(req.user.actor_type==='platform'&&(req.user.active_company_context||Object.hasOwn(b,'reason')||Object.hasOwn(b,'email'))){
+      const context=resolveActorContext(req);
+      if(!req.user.platform_membership_id||context?.scope!=='company'||!context.company_id||String(context.company_id)!==String(req.user.active_company_context)||
+        (!isPlatformOwner(req.user)&&!req.user.permissions?.includes('platform.users.manage')))return res.status(403).json({error:'Selecciona una empresa autorizada para editar su cuenta'});
+      const allowed=new Set(['name','email','phone','password','reason']);
+      if(Object.keys(b).some(key=>!allowed.has(key)))return res.status(403).json({error:'Esta ruta solo edita identidad y credenciales. Cambia rol y acceso empresarial desde Personas; el gobierno de plataforma usa sus rutas propias'});
+      if(typeof b.reason!=='string'||!b.reason.trim()||b.reason.trim().length>2000)return res.status(400).json({error:'Indica un motivo de hasta 2000 caracteres'});
+      if(!['name','email','phone','password'].some(key=>Object.hasOwn(b,key)))return res.status(400).json({error:'No hay cambios'});
+      if(b.name!==undefined&&(typeof b.name!=='string'||!b.name.trim()||b.name.trim().length>160))return res.status(400).json({error:'Nombre no válido'});
+      if(b.email!==undefined&&(typeof b.email!=='string'||b.email.trim().length>254||!/^\S+@\S+\.\S+$/.test(b.email.trim())))return res.status(400).json({error:'Correo no válido'});
+      if(b.phone!==undefined&&b.phone!==null&&(typeof b.phone!=='string'||b.phone.trim().length>80))return res.status(400).json({error:'Teléfono no válido'});
+      if(b.password!==undefined&&(typeof b.password!=='string'||b.password.length<10||b.password.length>1024))return res.status(400).json({error:'La contraseña debe tener entre 10 y 1024 caracteres'});
+      if(!/^[1-9]\d*$/.test(String(req.params.id))||BigInt(req.params.id)>9223372036854775807n)return res.status(400).json({error:'Usuario no válido'});
+      const cid=context.company_id;let db;
+      try{
+        db=await pool.connect();await db.query('BEGIN');
+        const company=(await db.query('select id from companies where id=$1 and active=true for no key update',[cid])).rows[0];
+        if(!company){await db.query('ROLLBACK');return res.sendStatus(404)}
+        await db.query('select id from user_memberships where company_id=$1 and user_id=$2 for update',[cid,req.params.id]);
+        await db.query('select id from company_people where company_id=$1 and user_id=$2 for update',[cid,req.params.id]);
+        const before=(await db.query(`select u.id,u.name,u.email,u.phone,r.code role_code,
+          exists(select 1 from user_memberships other where other.user_id=u.id and other.company_id<>$2 and other.active=true) shared_company,
+          exists(select 1 from platform_memberships pm where pm.user_id=u.id) platform_identity,
+          exists(select 1 from platform_owners po where po.user_id=u.id) ownership_identity
+          from users u left join roles r on r.id=u.role_id where u.id=$1 and (
+            exists(select 1 from user_memberships own where own.user_id=u.id and own.company_id=$2)
+            or (u.company_id=$2 and not exists(select 1 from user_memberships any_membership where any_membership.user_id=u.id))
+          ) for update of u`,[req.params.id,cid])).rows[0];
+        if(!before){await db.query('ROLLBACK');return res.sendStatus(404)}
+        if(before.platform_identity||before.ownership_identity||before.role_code==='admin'){
+          await db.query('ROLLBACK');return res.status(403).json({error:'La identidad privilegiada se administra desde el gobierno de plataforma'});
+        }
+        if(before.shared_company){await db.query('ROLLBACK');return res.status(403).json({error:'La cuenta comparte acceso activo con otra empresa; su identidad global requiere revisión separada'});}
+        if(b.email!==undefined&&(await db.query('select id from users where lower(email)=lower($1) and id<>$2',[b.email.trim().toLowerCase(),req.params.id])).rowCount){
+          await db.query('ROLLBACK');return res.status(409).json({error:'El correo ya está en uso'});
+        }
+        const fields=[],values=[];
+        for(const key of ['name','email','phone'])if(Object.hasOwn(b,key)){
+          values.push(key==='email'?b[key].trim().toLowerCase():key==='phone'?(b[key]?.trim()||null):b[key].trim());fields.push(`${key}=$${values.length}`);
+        }
+        const passwordChanged=Object.hasOwn(b,'password');
+        if(passwordChanged){values.push(await hashPassword(b.password));fields.push(`password_hash=$${values.length}`,'must_change_password=true');}
+        values.push(req.params.id,cid);
+        const after=(await db.query(`update users set ${fields.join(',')},updated_at=now() where id=$${values.length-1} and (
+          company_id=$${values.length} or exists(select 1 from user_memberships own where own.user_id=users.id and own.company_id=$${values.length})
+        ) returning id,name,email,phone`,values)).rows[0];
+        if(!after)throw new Error('Cuenta empresarial no actualizada');
+        if(passwordChanged)await db.query('delete from user_sessions where user_id=$1',[req.params.id]);
+        const safeBefore={id:before.id,name:before.name,email:before.email,phone:before.phone};
+        await writeAudit(db,req,{companyId:cid,action:'platform_company_user_update',entity:'user',entityId:before.id,
+          beforeData:safeBefore,afterData:{...after,password_changed:passwordChanged,reason:b.reason.trim(),actor_type:'platform',actor_name:req.user.name,context_company_id:cid}});
+        await db.query('COMMIT');return res.json({...after,company_id:cid,password_changed:passwordChanged});
+      }catch(e){if(db)try{await db.query('ROLLBACK')}catch{}return res.status(e.code==='23505'?409:400).json({error:e.code==='23505'?'El correo ya está en uso':'No se pudo actualizar la cuenta empresarial'});}
+      finally{if(db)db.release()}
+    }
     if(req.user.actor_type==='company'&&(b.active!==undefined||b.role_id!==undefined))return res.status(403).json({error:'El rol y la activación empresarial se modifican mediante PATCH /api/user-memberships/:id; no puedes cambiar la identidad global'});
     if(b.password&&String(b.password).length<10)return res.status(400).json({error:'La contraseña debe tener al menos 10 caracteres'});
     if(b.name===undefined&&b.phone===undefined&&b.role_id===undefined&&b.active===undefined&&!b.password)return res.status(400).json({error:'No hay cambios'});

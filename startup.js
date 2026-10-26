@@ -5,6 +5,7 @@ const path=require('path');
 
 MIGRATION_FILES.push('030_personnel_access.sql');
 MIGRATION_FILES.push('031_client_profiles.sql');
+MIGRATION_FILES.push('032_fleet_operational_registration.sql');
 
 function timeoutMs(value,fallback){
   const parsed=Number(value);

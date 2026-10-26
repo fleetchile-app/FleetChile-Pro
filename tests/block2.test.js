@@ -3,8 +3,10 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
 const {writeAudit}=require('../audit');
-const {registerCoreRoutes}=require('../core-api');
-const {registerOperationsRoutes}=require('../operations-api');
+const {registerCoreRoutes: registerCoreRoutesImpl}=require('../core-api');
+const {registerOperationsRoutes: registerOperationsRoutesImpl}=require('../operations-api');
+const registerCoreRoutes=(app,pool,options={})=>registerCoreRoutesImpl(app,pool,{assertTripResourcesReady:async()=>{},...options});
+const registerOperationsRoutes=(app,pool,options={})=>registerOperationsRoutesImpl(app,pool,{assertTripResourcesReady:async()=>{},...options});
 
 function fakeApp(){
   const routes=[];

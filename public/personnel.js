@@ -12,6 +12,8 @@
   let session='',root=null,revision=0,filters=defaults(),data=null,detail=null,tab='person',scene='list',draft=null,step=0,busy=false,readiness=null;
   const sessionKey=()=>[window.Auth?.token||'',window.Auth?.user?.id||'',window.Auth?.user?.company_id||'',window.localStorage?.getItem('fleet_company_context')||''].join(':');
   const companyName=()=>document.getElementById('activeCompanyName')?.textContent||window.Auth?.user?.company_name||'Empresa autorizada';
+  const supportContext=()=>Boolean(window.Auth?.user?.actor_type==='platform'&&id(window.Auth.user.platform_membership_id)&&id(window.localStorage?.getItem('fleet_company_context'))&&
+    (window.Auth.user.permissions?.includes('platform.users.manage')||(window.Auth.user.ownership_role&&window.Auth.user.ownership_active===true)));
   const canRead=()=>Boolean(window.Auth?.user?.permissions?.some(permission=>['company.people.read','company.people.manage'].includes(permission))||data?.can_manage);
   const live=(version=revision)=>version===revision&&session===sessionKey()&&root?.isConnected!==false&&document.getElementById('personnel-root')===root;
   const selected=(a,b)=>String(a??'')===String(b??'')?' selected':'';
@@ -70,7 +72,9 @@
     return payload;
   }
   function paint(html,focus=true){
-    if(!live())return;root.innerHTML=`<div class="personnel-screen">${html}<p data-page-error class="personnel-error" role="alert" tabindex="-1" hidden></p></div>`;
+    if(!live())return;
+    const support=supportContext()?`<p class="personnel-notice">Soporte de plataforma · Empresa: <strong>${esc(companyName())}</strong>. Administración limitada a esta empresa. Tu identidad sigue siendo de plataforma; no se otorgan permisos globales.</p>`:'';
+    root.innerHTML=`<div class="personnel-screen">${support}${html}<p data-page-error class="personnel-error" role="alert" tabindex="-1" hidden></p></div>`;
     if(focus)root.querySelector('[data-heading]')?.focus();
   }
   const heading=title=>`<h2 data-heading tabindex="-1">${esc(title)}</h2>`;
@@ -113,10 +117,11 @@
     const version=++revision;scene='list';
     paint(`${heading('Personas y accesos')}<p role="status">Cargando personas…</p>${button('reload','Reintentar')}`);
     try{
-      if(!canRead())filters.role='driver';
+      if(!canRead()&&!supportContext())filters.role='driver';
       const params=new URLSearchParams();for(const [key,value] of Object.entries(filters))if(value!=='')params.set(key,value);
       const payload=await request(base+'?'+params,{},version);
       if(!Array.isArray(payload.rows))throw new Error('La lista de personas no tiene un formato válido.');
+      if(supportContext()&&payload.context_company_id!=null&&String(payload.context_company_id)!==String(window.localStorage.getItem('fleet_company_context')))throw new Error('La respuesta no corresponde a la empresa seleccionada.');
       data=payload;readiness=null;
       if(data.can_accounts&&data.policy?.enforced===false){try{readiness=await request(base+'/policy/readiness',{},version);}catch(error){if(error.stale)throw error;data.readiness_error=error.message;}}
       filters.page=Number(payload.page)||filters.page;filters.page_size=Number(payload.page_size)||filters.page_size;drawList();
@@ -200,7 +205,15 @@
   async function openDetail(personId,requestedTab='person'){
     if(!id(personId))return;const version=++revision;scene='detail';tab=requestedTab;
     paint(`${heading('Ficha de persona')}<p role="status">Cargando ficha…</p>${button('list','Volver a personas')}`);
-    try{detail=await request(base+'/'+encodeURIComponent(personId),{},version);if(!detail.person)throw new Error('La ficha no tiene un formato válido.');drawDetail();}catch(error){showError(error);}
+    try{
+      detail=await request(base+'/'+encodeURIComponent(personId),{},version);if(!detail.person)throw new Error('La ficha no tiene un formato válido.');
+      if(supportContext()&&data.can_accounts&&id(detail.person.user_id)){
+        if(String(detail.account?.id)!==String(detail.person.user_id)||detail.account?.can_edit_identity!==true){
+          detail.account=null;detail.account_error='La cuenta no admite edición de identidad en esta empresa. Las identidades privilegiadas o compartidas requieren revisión de plataforma.';
+        }
+      }
+      drawDetail();
+    }catch(error){showError(error);}
   }
   function drawDetail(){
     const person=detail.person,manage=detail.can_manage===true,driver=person.role_code==='driver',licenses=detail.can_licenses===true&&driver,read=canRead();
@@ -215,7 +228,9 @@
       const accountEditor=data.can_accounts&&person.membership_id?`<form data-form="access">${selectField('active','Acceso empresarial',[['true','Activar'],['false','Desactivar']],String(person.membership_active??true))}${reasonField()}${errorBox()}${actions('Cambiar acceso empresarial')}</form><form data-form="role">${selectField('role_id','Rol',roleOptions(),person.role_id||'')}${reasonField()}${errorBox()}${actions('Cambiar rol')}</form>`:
         data.can_accounts&&detail.can_manage&&!person.user_id&&!person.membership_id?`<form data-form="draft-account"><h3>Crear cuenta para esta persona</h3><p>Se usará esta misma ficha. Completa sus datos y un contrato vigente antes de crear acceso. Un correo existente no se asociará automáticamente.</p><div class="personnel-grid">${field('email','Correo','','email','required autocomplete="email"')}${field('phone','Teléfono (opcional)','','tel','autocomplete="tel"')}${field('password','Contraseña inicial','','password','required minlength="10" autocomplete="new-password"')}${selectField('role_id','Rol de acceso',roleOptions(),'','required')}</div><div data-account-license></div>${errorBox()}${actions('Crear cuenta de acceso')}</form>`:
         '<p>No tienes permiso para crear o administrar esta cuenta, o la identidad existente requiere revisión de su membership.</p>';
-      body=`${facts([['Rol',person.role_name||person.role_code||'Sin cuenta'],['Acceso efectivo',accessLabel(detail.access)]])}<p>Reactivar el acceso empresarial no elimina condiciones, contratos faltantes, licencia vencida ni un bloqueo global.</p>${accountEditor}`;
+      const account=detail.account;
+      const accountDetails=supportContext()&&data.can_accounts&&detail.can_accounts!==false&&person.user_id&&account&&String(account.id)===String(person.user_id)?`<form data-form="account-details"><h3>Datos de la cuenta vinculada</h3><p>Edita esta cuenta autorizada. Deja la contraseña vacía para conservarla. El rol y el acceso empresarial se gestionan por separado. Una contraseña nueva obliga a cambiarla al ingresar y cierra sus sesiones.</p><div class="personnel-grid">${field('name','Nombre de la cuenta',account.name||'','text','required maxlength="160"')}${field('email','Correo',account.email||'','email','required autocomplete="email"')}${field('phone','Teléfono',account.phone||'','tel')}${field('password','Nueva contraseña (opcional)','','password','minlength="10" autocomplete="new-password"')}</div>${reasonField()}${errorBox()}${actions('Guardar datos de cuenta')}</form>`:detail.account_error?`<p role="status">${esc(detail.account_error)}</p>`:'';
+      body=`${facts([['Rol',person.role_name||person.role_code||'Sin cuenta'],['Acceso efectivo',accessLabel(detail.access)]])}<p>Reactivar el acceso empresarial no elimina condiciones, contratos faltantes, licencia vencida ni un bloqueo global.</p>${accountDetails}${accountEditor}`;
     }
     if(tab==='events')body=(detail.events||[]).map(event=>`<article class="personnel-event"><h3>${esc(event.action)}</h3>${facts([['Actor',event.actor_name||'No informado'],['Fecha',event.created_at?new Date(event.created_at).toLocaleString('es-CL',{timeZone:'America/Santiago'}):'No informada'],['Motivo',event.reason||'No informado']])}${eventChanges(event)}</article>`).join('')||'<p>No hay eventos registrados.</p>';
     paint(`${button('list','← Volver a personas')}${heading(person.name||'Ficha de persona')}${read?`<p class="personnel-notice">${esc(accessLabel(detail.access))}</p>`:''}<nav class="personnel-tabs" aria-label="Secciones de la ficha">${tabs.map(([key,text])=>button('tab',text,`data-tab="${key}"${tab===key?' aria-current="page"':''}`)).join('')}</nav>${body}`);
@@ -258,6 +273,12 @@
       }
       if(!String(values.reason||'').trim()&&!['activate','draft-account'].includes(kind))throw new Error('Indica un motivo para registrar este cambio.');
       const personId=id(detail?.person?.id),endpoint=personId?base+'/'+personId:null;
+      if(kind==='account-details'&&supportContext()&&data.can_accounts&&detail.can_accounts!==false&&detail.person.user_id&&String(detail.account?.id)===String(detail.person.user_id)){
+        if(!values.name?.trim()||!values.email?.trim())throw new Error('Indica el nombre y correo de la cuenta.');
+        const payload={name:values.name.trim(),email:values.email.trim(),phone:(values.phone||'').trim(),reason:values.reason};
+        if(values.password){if(values.password.length<10)throw new Error('La nueva contraseña debe tener al menos 10 caracteres.');payload.password=values.password;}
+        return mutate('/api/users/'+encodeURIComponent(detail.person.user_id),'PATCH',payload,form,()=>openDetail(personId,'access'));
+      }
       if(kind==='draft-account'&&data.can_accounts&&detail.can_manage&&!detail.person.user_id&&!detail.person.membership_id){
         if(!values.email?.trim()||!id(values.role_id)||String(values.password||'').length<10)throw new Error('Indica correo, rol y una contraseña de al menos 10 caracteres.');
         const payload={email:values.email.trim(),phone:values.phone||'',password:values.password,role_id:values.role_id};
@@ -350,8 +371,25 @@
   window.companyPeople=()=>{
     window.leaveAdminView?.();document.querySelectorAll('#nav button').forEach(button=>button.classList.toggle('active',button.dataset.v==='companyPeople'));
     window.adminSurface='company';
-    const title=document.getElementById('title');if(title){title.textContent='Personas y accesos';title.focus?.();}
+    const title=document.getElementById('title');if(title){title.textContent=supportContext()?'Soporte plataforma · '+companyName()+' · Personas y accesos':'Personas y accesos';title.focus?.();}
+    if(window.Auth?.user?.actor_type==='platform'&&!supportContext()){
+      const host=document.getElementById('app');if(host)host.innerHTML='<div class="admin-denied" role="alert">Selecciona una empresa autorizada para abrir soporte de Personas y accesos.</div>';return;
+    }
     return renderCompanyPeople({standalone:true});
+  };
+  window.openCompanyPersonForUser=async userId=>{
+    if(!id(userId))return;
+    await window.companyPeople();if(!live()||!data?.can_accounts)return;
+    const version=++revision;
+    try{
+      const payload=await request(base+'?user_id='+encodeURIComponent(userId)+'&page_size=25',{},version);
+      const rows=Array.isArray(payload.rows)?payload.rows.filter(row=>String(row.user_id)===String(userId)):[];
+      if(rows.length!==1)throw new Error('No se pudo verificar una persona o membership única para este usuario en la empresa seleccionada.');
+      const row=rows[0];
+      if(id(row.id))return openDetail(row.id,'access');
+      if(id(row.membership_id)&&data.can_manage)return beginWizard(row);
+      throw new Error('Esta cuenta necesita una membership empresarial autorizada antes de regularizar. No se creará otra cuenta.');
+    }catch(error){showError(error);}
   };
   window.renewPersonnelLicenseForDriver=async driverId=>{
     if(!id(driverId))return;await window.companyPeople();if(!live()||!data?.can_licenses)return;

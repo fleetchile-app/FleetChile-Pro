@@ -7,7 +7,10 @@
   peopleBtn.onclick=()=>window.companyPeople?.();
 
   const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-  let adminIdentity=null,adminRevision=0,activeAdmin=null,companyProfile=null,peopleEntrySession='';
+  let adminIdentity=null,adminRevision=0,activeAdmin=null,companyProfile=null,peopleEntrySession='',supportSwitchBusy=false;
+  const positiveId=value=>/^[1-9]\d*$/.test(String(value))?String(value):null;
+  const platformSupport=u=>Boolean(u?.actor_type==='platform'&&positiveId(u.platform_membership_id)&&
+    (u.permissions?.includes('platform.users.manage')||(u.ownership_role&&u.ownership_active===true)));
   const owner=u=>Boolean(u?.actor_type==='platform'&&u.ownership_role&&u.ownership_active!==false);
   const legacy=u=>Boolean(u?.actor_type==='legacy'&&u.role_code==='admin');
   const companyAdmin=u=>Boolean((u?.actor_type==='company'&&u.membership_id&&u.permissions?.includes('company.users.manage'))||legacy(u));
@@ -42,10 +45,13 @@
     if(String(user?.id||'')!==String(adminIdentity?.id||'')||String(user?.company_id||'')!==String(adminIdentity?.company_id||''))companyProfile=null;
     adminIdentity=user||null;btn.hidden=!companyAdmin(user);
     const companyActor=user?.actor_type==='company'&&user.membership_id;
-    const selectedCompany=user?.active_company_context||(typeof localStorage!=='undefined'&&localStorage.getItem('fleet_company_context'));
-    const contextualPlatform=user?.actor_type==='platform'&&selectedCompany;
+    const selectedCompany=typeof localStorage!=='undefined'?localStorage.getItem('fleet_company_context'):user?.active_company_context;
+    const contextualPlatform=user?.actor_type==='platform'&&positiveId(selectedCompany);
     const peopleAllowed=['company.people.read','company.people.manage','company.licenses.manage'].some(code=>user?.permissions?.includes(code));
-    peopleBtn.hidden=!((companyActor&&peopleAllowed)||(contextualPlatform&&peopleAllowed));
+    const support=contextualPlatform&&platformSupport(user);
+    peopleBtn.hidden=!((companyActor&&peopleAllowed)||support);
+    peopleBtn.setAttribute('aria-label',support?'Soporte plataforma: Personas y accesos de la empresa seleccionada':'Personas y accesos');
+    peopleBtn.innerHTML='<i aria-hidden="true">'+icon+'</i><span>'+(support?'Personas y accesos · Soporte':'Personas y accesos')+'</span>';
     const entryKey=user?[user.id,user.company_id,window.Auth?.token||''].join(':'):'';
     if(!user)peopleEntrySession='';
     if(entryKey&&entryKey!==peopleEntrySession){
@@ -144,7 +150,7 @@
   window.newCompany=()=>{window.editCompany(null)};
   window.editCompany=async id=>{const c=id===null?{}:(await get('companies')).find(x=>Number(x.id)===Number(id))||{};document.getElementById('mt').textContent=id===null?'Nueva empresa':'Gestionar empresa';document.getElementById('form').innerHTML=`<div class="formgrid">${[['legal_name','Razón social'],['rut','RUT'],['trade_name','Nombre comercial'],['email','Correo'],['phone','Teléfono'],['plan_code','Plan'],['license_status','Estado licencia'],['license_started_at','Inicio licencia'],['license_expires_at','Vencimiento'],['user_limit','Límite usuarios'],['truck_limit','Límite camiones']].map(([k,l])=>`<div class="field"><label>${l}</label><input name="${k}" value="${esc(c[k]||'')}" ${k==='legal_name'?'required':''}></div>`).join('')}<div class="field"><label>Estado empresa</label><select name="active"><option value="true" ${c.active!==false?'selected':''}>Activa</option><option value="false" ${c.active===false?'selected':''}>Inactiva</option></select></div><div class="formactions"><button class="primary">Guardar</button></div></div>`;document.getElementById('modal').classList.remove('hidden');document.getElementById('form').onsubmit=async e=>{e.preventDefault();const o=Object.fromEntries(new FormData(e.target));o.active=o.active==='true';for(const k of ['user_limit','truck_limit'])if(o[k])o[k]=Number(o[k]);try{const url=id===null?'companies':'admin/companies/'+id;const r=await fetch('/api/'+url,{method:id===null?'POST':'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});const d=await r.json();if(!r.ok)throw Error(d.error||'No se pudo guardar');close();organization()}catch(err){alert(err.message)}}};
   window.saveCompany=async id=>{const o={};['legal_name','rut','trade_name','email','phone','address','commune','region'].forEach(k=>o[k]=document.getElementById('co-'+k).value);try{await patch('admin/companies/'+id,o);alert('Organización actualizada');organization()}catch(e){alert(e.message)}};
-  async function users(){const platform=window.adminSurface==='platform';const u=await get('users');document.getElementById('admin-panel').innerHTML=`<div class="admin-card"><div class="admin-section-head"><div><h3>Usuarios</h3><p>${platform?'Usuarios de plataforma y empresas.':'Usuarios de mi empresa.'}</p></div><button class="primary" onclick="newAdminUser()">+ Nuevo usuario</button></div><div class="wrap"><table class="table"><thead><tr><th>Nombre</th><th>Correo</th><th>Alcance</th><th>Rol moderno</th><th>Empresa</th><th>Acceso conductor</th><th>Último acceso</th><th>Estado</th><th></th></tr></thead><tbody>${u.map(x=>{const isPlatform=!!x.platform_role_code;const role=isPlatform?(x.platform_role_name||x.platform_role_code):(x.modern_role_name||x.role_name);const company=isPlatform?'—':(x.modern_company_name||x.company_name||'—');const membershipId=/^[1-9]\d*$/.test(String(x.modern_membership_id))?String(x.modern_membership_id):null;const memberActive=x.modern_membership_active;const active=platform?(isPlatform?(x.platform_membership_active??x.active):(memberActive??x.active)):Boolean(memberActive&&x.active);return `<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.email)}</td><td>${isPlatform?'PLATFORM':'COMPANY'}</td><td>${esc(role||'Sin rol moderno')}</td><td>${esc(company)}</td><td>${!isPlatform&&(x.modern_role_code||x.role_code)==='driver'?`<span>${x.driver_id?'Asociado':'Sin asociar'}</span><button class="smallbtn" onclick="associateUserDriver(${Number(x.id)})">${x.driver_id?'Ver asociación':'Asociar conductor'}</button>`:'—'}</td><td>${x.last_login_at?new Date(x.last_login_at).toLocaleString('es-CL'):'Nunca'}</td><td><span class="admin-status ${active?'on':'off'}">${!platform&&!x.active?'Cuenta bloqueada por plataforma':active?'Activo':'Inactivo'}</span></td><td>${platform?`<button class="smallbtn" onclick="toggleAdminUser(${x.id},${!x.active})">${x.active?'Desactivar cuenta':'Activar cuenta'}</button>`:membershipId?`<button class="smallbtn" onclick="toggleCompanyMembership('${membershipId}',${!memberActive})">${memberActive?'Desactivar acceso empresa':'Activar acceso empresa'}</button>`:'<span>Sin membership empresarial</span>'}${platform?platformPersonnelExemptionAction(x):''}</td></tr>`}).join('')}</tbody></table></div></div>`}
+  async function users(){const platform=window.adminSurface==='platform';const u=await get('users');document.getElementById('admin-panel').innerHTML=`<div class="admin-card"><div class="admin-section-head"><div><h3>Usuarios</h3><p>${platform?'Usuarios de plataforma y empresas.':'Usuarios de mi empresa.'}</p></div><button class="primary" onclick="newAdminUser()">+ Nuevo usuario</button></div><div class="wrap"><table class="table"><thead><tr><th>Nombre</th><th>Correo</th><th>Alcance</th><th>Rol moderno</th><th>Empresa</th><th>Acceso conductor</th><th>Último acceso</th><th>Estado</th><th></th></tr></thead><tbody>${u.map(x=>{const isPlatform=!!x.platform_role_code;const role=isPlatform?(x.platform_role_name||x.platform_role_code):(x.modern_role_name||x.role_name);const company=isPlatform?'—':(x.modern_company_name||x.company_name||'—');const membershipId=/^[1-9]\d*$/.test(String(x.modern_membership_id))?String(x.modern_membership_id):null;const memberActive=x.modern_membership_active;const active=platform?(isPlatform?(x.platform_membership_active??x.active):(memberActive??x.active)):Boolean(memberActive&&x.active);return `<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.email)}</td><td>${isPlatform?'PLATFORM':'COMPANY'}</td><td>${esc(role||'Sin rol moderno')}</td><td>${esc(company)}</td><td>${!isPlatform&&(x.modern_role_code||x.role_code)==='driver'?`<span>${x.driver_id?'Asociado':'Sin asociar'}</span><button class="smallbtn" onclick="associateUserDriver(${Number(x.id)})">${x.driver_id?'Ver asociación':'Asociar conductor'}</button>`:'—'}</td><td>${x.last_login_at?new Date(x.last_login_at).toLocaleString('es-CL'):'Nunca'}</td><td><span class="admin-status ${active?'on':'off'}">${!platform&&!x.active?'Cuenta bloqueada por plataforma':active?'Activo':'Inactivo'}</span></td><td>${platform?`<button class="smallbtn" onclick="toggleAdminUser(${x.id},${!x.active})">${x.active?'Desactivar cuenta':'Activar cuenta'}</button>`:membershipId?`<button class="smallbtn" onclick="toggleCompanyMembership('${membershipId}',${!memberActive})">${memberActive?'Desactivar acceso empresa':'Activar acceso empresa'}</button>`:'<span>Sin membership empresarial</span>'}${platform?platformUserSupportAction(x)+platformPersonnelExemptionAction(x):''}</td></tr>`}).join('')}</tbody></table></div></div>`}
   window.associateUserDriver=async id=>{
     try{
       const data=await get('users/'+encodeURIComponent(id)+'/driver-assignment');
@@ -207,7 +213,16 @@
       finally{saving=false;submit.disabled=false;}
     };
   };
-  window.toggleAdminUser=async(id,active)=>{if(!confirm(active?'¿Activar usuario?':'¿Desactivar usuario?'))return;try{await patch('users/'+id,{active});users()}catch(e){alert(e.message)}};
+  window.toggleAdminUser=async(id,active)=>{
+    const company=typeof localStorage!=='undefined'&&localStorage.getItem('fleet_company_context');
+    if(company){
+      alert('Estás administrando una empresa. Gestiona el acceso empresarial desde Personas y accesos; no se modificará la cuenta global.');
+      if(positiveId(id)&&typeof window.openCompanyPersonForUser==='function')return window.openCompanyPersonForUser(String(id));
+      return window.companyPeople?.();
+    }
+    if(!confirm(active?'¿Activar usuario?':'¿Desactivar usuario?'))return;
+    try{await patch('users/'+id,{active});return users()}catch(e){alert(e.message)}
+  };
   window.toggleCompanyMembership=async(id,active)=>{
     if(window.adminSurface!=='company'||!/^[1-9]\d*$/.test(String(id)))return;
     if(!confirm(active?'¿Activar el acceso a esta empresa? No cambia el bloqueo global de la cuenta.':'¿Desactivar solo el acceso a esta empresa? Los accesos a otras empresas no se modificarán.'))return;
@@ -221,6 +236,45 @@
   window.saveSettings=async()=>{try{for(const el of document.querySelectorAll('[data-setting]')){let v;if(el.dataset.type==='boolean')v=el.checked;else if(el.dataset.type==='number')v=Number(el.value);else v=el.value;await patch('admin/settings/'+encodeURIComponent(el.dataset.setting),{value:v})}const s=await get('public/settings');const raw=s['appearance.company_name'];const name=typeof raw==='string'?raw.replace(/^"|"$/g,''):raw;applyBranding(name);alert('Configuración guardada');settings()}catch(e){alert(e.message)}};
   async function audit(){const a=await get('admin/audit');document.getElementById('admin-panel').innerHTML=`<div class="admin-card"><div class="admin-section-head"><div><h3>Auditoría</h3><p>Registro reciente de acciones del sistema.</p></div></div><div class="wrap"><table class="table"><thead><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Entidad</th><th>ID</th><th>IP</th></tr></thead><tbody>${a.map(x=>`<tr><td>${new Date(x.created_at).toLocaleString('es-CL')}</td><td>${esc(x.user_name||'Sistema')}</td><td>${esc(x.action)}</td><td>${esc(x.entity)}</td><td>${esc(x.entity_id||'—')}</td><td>${esc(x.ip||'—')}</td></tr>`).join('')||'<tr><td colspan="6">No hay eventos registrados.</td></tr>'}</tbody></table></div></div>`}
   const platformUsers=users;
+  function platformUserSupportAction(user){
+    if(!platformSupport(adminIdentity)||user.platform_role_code)return '';
+    const userId=positiveId(user.id),companyId=positiveId(user.modern_company_id);
+    if(!userId||!companyId)return '<small>Soporte empresarial: se requiere una membership verificable.</small>';
+    return `<button class="smallbtn" onclick="openPlatformCompanyUser('${userId}','${companyId}')">Editar en empresa</button>`;
+  }
+  window.openPlatformCompanyUser=async function(userId,companyId){
+    if(supportSwitchBusy||!platformSupport(adminIdentity)||!positiveId(userId)||!positiveId(companyId))return;
+    const revision=adminRevision,identity=String(adminIdentity.id),token=window.Auth?.token;
+    const prior=typeof localStorage!=='undefined'?localStorage.getItem('fleet_company_context')||'':'';
+    supportSwitchBusy=true;
+    try{
+      // Revalidate both the actor and row's company before recording a context switch.
+      const identityResult=await get('auth/me');
+      if(!platformSupport(identityResult.user)||String(identityResult.user.id)!==identity)return;
+      const response=await fetch('/api/users/'+encodeURIComponent(userId)+'/memberships?company_id='+encodeURIComponent(companyId));
+      const memberships=await response.json();if(!response.ok)throw Error(memberships.error||'No se pudo verificar la empresa del usuario.');
+      if(revision!==adminRevision||window.Auth?.token!==token)return;
+      const matches=Array.isArray(memberships)?memberships.filter(row=>String(row.company_id)===String(companyId)&&String(row.user_id)===String(userId)&&positiveId(row.id)):[];
+      if(matches.length!==1)throw Error('No hay una membership empresarial única para ese usuario y empresa.');
+      if(!confirm('¿Abrir soporte de plataforma para la empresa #'+companyId+'? Se registrará la selección de esta empresa antes de editar.'))return;
+      if((typeof localStorage!=='undefined'?localStorage.getItem('fleet_company_context')||'':'')!==prior)throw Error('El contexto cambió durante la solicitud. Vuelve a seleccionar la empresa.');
+      const switched=await fetch('/api/auth/company-context',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({company_id:companyId})});
+      const result=await switched.json();if(!switched.ok)throw Error(result.error||'No se pudo cambiar de empresa.');
+      if(String(result.company?.id)!==String(companyId))throw Error('El servidor no confirmó la empresa solicitada.');
+      if(revision!==adminRevision||String(adminIdentity?.id)!==identity||window.Auth?.token!==token)return;
+      if((typeof localStorage!=='undefined'?localStorage.getItem('fleet_company_context')||'':'')!==prior)throw Error('El contexto cambió durante la solicitud. Vuelve a seleccionar la empresa.');
+      localStorage.setItem('fleet_company_context',String(companyId));
+      const name=document.getElementById('activeCompanyName');if(name)name.textContent=result.company.legal_name||'Empresa #'+companyId;
+      const mark=document.getElementById('activeCompanyMark');if(mark)mark.textContent='FC';
+      const selector=document.getElementById('companyContextSelect');if(selector)selector.value=String(companyId);
+      const selectedIdentity={...identityResult.user,active_company_context:String(companyId)};
+      if(window.Auth)window.Auth.user=selectedIdentity;
+      window.renderAdminNavigation(selectedIdentity);
+      if(typeof window.openCompanyPersonForUser!=='function')throw Error('No se pudo cargar Personas y accesos. Recarga la aplicación.');
+      await window.openCompanyPersonForUser(String(userId));
+    }catch(error){if(!error.stale)alert(error.message);}
+    finally{supportSwitchBusy=false;}
+  };
   users=async function(){
     if(window.adminSurface==='platform')return platformUsers();
     if(typeof window.renderCompanyPeople!=='function')throw Error('No se pudo cargar Personas y accesos. Recarga la aplicación.');

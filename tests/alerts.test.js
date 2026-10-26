@@ -8,6 +8,16 @@ function fakeApp(){const routes=[];for(const method of ['get','post','patch'])ro
 function response(){return {statusCode:200,payload:undefined,status(code){this.statusCode=code;return this},json(value){this.payload=value;return this},sendStatus(code){this.statusCode=code;return this}}}
 async function invoke(route,overrides={}){const req={user:{id:7,role_code:'maintenance',company_id:10,permissions:['dashboard.read','fleet.manage']},body:{},query:{},params:{id:'5'},ip:'127.0.0.1',...overrides};const res=response();let index=0;const next=async()=>{const handler=route.handlers[index++];if(handler)return handler(req,res,next)};await next();return res}
 function mockPool(resolver){const calls=[];let releases=0;const client={async query(sql,values=[]){calls.push({sql,values});return resolver(sql,values,calls)},release(){releases++}};return {calls,get releases(){return releases},async connect(){return client},async query(sql,values=[]){calls.push({sql,values});return resolver(sql,values,calls)}}}
+
+test('alerta vial pendiente no puede silenciarse con resolución manual',async()=>{
+ const pool=mockPool(async(sql,values)=>{
+  if(sql.startsWith('select * from alerts')){assert.deepEqual(values,['5',10]);return {rows:[{id:5,company_id:10,source_type:'truck',condition_code:'road_soap_expired',resolved:false}]};}
+  if(['BEGIN','ROLLBACK'].includes(sql))return {rows:[]};
+  throw Error('No debe modificar alertas: '+sql);
+ });
+ const app=await alertApp(pool),r=await invoke(app.route('post','/api/fleet/alerts/:id/resolve'));
+ assert.equal(r.statusCode,409);assert.match(r.payload.error,/regularizar/);assert.equal(pool.calls.at(-1).sql,'ROLLBACK');assert.equal(pool.releases,1);
+});
 async function alertApp(pool){const app=fakeApp();await registerFleetRoutes(app,pool);return app}
 
 test('migración protege concurrencia con identidad estructurada y conserva legacy nullable',()=>{

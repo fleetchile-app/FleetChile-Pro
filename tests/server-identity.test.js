@@ -4,6 +4,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 
 const source=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
+const profileSource=fs.readFileSync(path.join(__dirname,'..','vehicle-profile-api.js'),'utf8');
 
 test('server resuelve company scope moderno desde resolveActorContext',()=>{
   assert.match(source,/const companyId=req=>\{const actor=resolveActorContext\(req\);if\(actor\?\.scope==='company'\)return actor\.company_id\|\|null;/);
@@ -42,13 +43,14 @@ test('DELETE CRUD genérico incluye ownership empresarial',()=>{
 });
 
 test('creaciones directas usan resourceCompanyId y no body.company_id',()=>{
-  for(const route of ['/api/trucks','/api/routes','/api/loads','/api/fuel','/api/maintenance']){
-    const start=source.indexOf(`app.post("${route}"`);
+  for(const route of ['/api/fleet/vehicles','/api/routes','/api/loads','/api/fuel','/api/maintenance']){
+    const target=route==='/api/fleet/vehicles'?profileSource:source;
+    const start=target.indexOf(route==='/api/fleet/vehicles'?`app.post('${route}'`:`app.post("${route}"`);
     assert.ok(start>=0,`Ruta no encontrada: ${route}`);
-    const end=source.indexOf('\napp.',start+1);
-    const fragment=source.slice(start,end<0?source.length:end);
-    if(route==='/api/loads')assert.match(fragment,/requireCreationCompany/);else assert.match(fragment,/req\.resourceCompanyId/);
-    assert.doesNotMatch(fragment,/body\.company_id/);
+    const end=target.indexOf('\napp.',start+1);
+    const fragment=target.slice(start,end<0?target.length:end);
+    if(route==='/api/loads')assert.match(fragment,/requireCreationCompany/);else if(route==='/api/fleet/vehicles')assert.match(fragment,/c\.company_id/);else assert.match(fragment,/req\.resourceCompanyId/);
+    if(route!=='/api/fleet/vehicles')assert.doesNotMatch(fragment,/body\.company_id/);
   }
 });
 

@@ -76,12 +76,21 @@ function registerPersonnelRoutes(app,pool,{resolveActorContext,requirePermission
   if(!req.user)return res.status(401).json({error:'Autenticación requerida'});
   const c=resolveActorContext(req);
   if(!c||c.scope!=='company'||!c.company_id||c.actor_type==='unresolved')return res.status(403).json({error:'Contexto empresarial requerido'});
-  // Explicit permission list; employment data never inherits a role-name bypass.
-  if(!permissions.some(p=>(c.permissions||[]).includes(p)))return res.status(403).json({error:'Permiso empresarial requerido'});
+  const support=c.actor_type==='platform'&&req.user.actor_type==='platform'&&Boolean(req.user.platform_membership_id)&&
+   sameId(c.company_id,req.user.active_company_context)&&
+   ((req.user.permissions||[]).includes('platform.users.manage')||isPlatformOwner(req.user));
+  // Support is scoped to this request. Never synthesize company permissions in
+  // the global identity or change the actor's platform ownership/role.
+  if((c.actor_type==='platform'||req.user.actor_type==='platform')?!support:!permissions.some(p=>(c.permissions||[]).includes(p)))return res.status(403).json({error:'Permiso empresarial requerido'});
+  req.personnelSupport=support;
   req.personnelContext=c;return next();
  };
- const flags=req=>{const perms=req.personnelContext.permissions||[];return {can_manage:perms.includes('company.people.manage'),can_accounts:perms.includes(ACCOUNT_PERMISSION),can_licenses:perms.includes('company.licenses.manage')};};
- const full=req=>(req.personnelContext.permissions||[]).some(p=>['company.people.read','company.people.manage'].includes(p));
+ const flags=req=>{const perms=req.personnelContext.permissions||[],support=req.personnelSupport===true;return {
+  can_read:support||perms.includes('company.people.read')||perms.includes('company.people.manage'),
+  can_manage:support||perms.includes('company.people.manage'),can_accounts:support||perms.includes(ACCOUNT_PERMISSION),can_licenses:support||perms.includes('company.licenses.manage'),
+  platform_support:support,can_edit_identity:support,context_company_id:req.personnelContext.company_id
+ };};
+ const full=req=>flags(req).can_read;
  const wrap=fn=>async(req,res)=>{
   const send=res.json.bind(res);res.json=value=>send(repo.civilDates(value));
   try{await fn(req,res);}catch(e){const status=e.status||(e.code==='23505'?409:500);res.status(status).json({error:e.status?e.message:e.code==='23505'?'Ya existe ese RUT, correo o vínculo; revisa los datos':'No se pudo completar la operación de personas',...(e.status&&e.code?{code:e.code}:{})});}
@@ -125,6 +134,7 @@ function registerPersonnelRoutes(app,pool,{resolveActorContext,requirePermission
   if(restricted&&!['name','role_code','license','id'].includes(sort))throw error(403,'Orden no disponible en la vista de licencias');
   if(q.q&&(typeof q.q!=='string'||q.q.length>160))throw error(400,'Búsqueda no válida');
   const driverId=q.driver_id?id(q.driver_id,'Conductor'):null;
+  const userId=q.user_id!==undefined?id(q.user_id,'Usuario'):null;
   const policy=await repo.policy(pool,cid(req)),today=repo.todayIn(policy.time_zone),rows=await repo.lists(pool,cid(req),{restricted});
   let out=rows.map(row=>{
    const contracts=dates(jsonArray(row.contracts)),conditions=dates(jsonArray(row.conditions)),licenses=dates(jsonArray(row.licenses));
@@ -135,7 +145,7 @@ function registerPersonnelRoutes(app,pool,{resolveActorContext,requirePermission
    return {id:row.id,user_id:row.user_id,membership_id:row.membership_id,name:row.name,email:row.email,rut:row.rut,job_title:row.job_title,driver_id:row.driver_id,role_code:row.role_code,role_name:row.role_name,condition_label:condition?.type||null,contract_label:row.contract_exempt?'exempt':contract?.type||'missing',access,license_label:label};
   });
   const needle=(q.q||'').toLocaleLowerCase();
-  out=out.filter(row=>(!needle||[row.name,...(restricted?[]:[row.email,row.rut,row.job_title])].some(v=>String(v||'').toLocaleLowerCase().includes(needle)))&&(!q.role||row.role_code===q.role)&&(!driverId||sameId(row.driver_id,driverId))&&(!q.condition||row.condition_label===q.condition)&&(!q.contract||row.contract_label===q.contract)&&(!q.access||(q.access==='allowed'?row.access?.allowed:q.access==='blocked'?!row.access?.allowed:false)));
+  out=out.filter(row=>(!needle||[row.name,...(restricted?[]:[row.email,row.rut,row.job_title])].some(v=>String(v||'').toLocaleLowerCase().includes(needle)))&&(!q.role||row.role_code===q.role)&&(!driverId||sameId(row.driver_id,driverId))&&(!userId||sameId(row.user_id,userId))&&(!q.condition||row.condition_label===q.condition)&&(!q.contract||row.contract_label===q.contract)&&(!q.access||(q.access==='allowed'?row.access?.allowed:q.access==='blocked'?!row.access?.allowed:false)));
   out.sort((a,b)=>{const key={condition:'condition_label',contract:'contract_label',license:'license_label'}[sort]||sort;const av=sort==='access'?String(a.access?.allowed):String(a[key]??''),bv=sort==='access'?String(b.access?.allowed):String(b[key]??'');return (av.localeCompare(bv,'es')||String(a.id||a.membership_id).localeCompare(String(b.id||b.membership_id)))*(direction==='asc'?1:-1);});
   const total=out.length;let unread=0;
   if(!restricted)unread=(await pool.query(`select count(*)::int n from personnel_notifications n where n.company_id=$1
@@ -171,7 +181,18 @@ function registerPersonnelRoutes(app,pool,{resolveActorContext,requirePermission
    const licenses=(await pool.query('select id,classes,issued_date,printed_expiry,effective_expiry,current from person_driver_licenses where company_id=$1 and person_id=$2 order by id desc',[cid(req),pid])).rows;
    return res.json({person:{id:p.id,name:p.name,driver_id:p.driver_id,role_code:p.role_code},licenses,can_manage:false,can_licenses:f.can_licenses});
   }
-  const h=await repo.history(pool,cid(req),pid),pol=await repo.policy(pool,cid(req));res.json({person:p,...h,access:eligibility({...p,birth_date:cleanDate(p.birth_date)},h,repo.todayIn(pol.time_zone)),roles:await repo.roles(pool),...f});
+  const h=await repo.history(pool,cid(req),pid),pol=await repo.policy(pool,cid(req));
+  let account;
+  if(req.personnelSupport&&p.user_id){
+   const row=(await pool.query(`select u.id,u.name,u.email,u.phone,r.code role_code,
+    exists(select 1 from user_memberships other where other.user_id=u.id and other.company_id<>$1 and other.active=true) shared_company,
+    exists(select 1 from platform_memberships pm where pm.user_id=u.id) platform_identity,
+    exists(select 1 from platform_owners po where po.user_id=u.id) ownership_identity
+    from users u join user_memberships um on um.user_id=u.id left join roles r on r.id=u.role_id
+    where um.company_id=$1 and um.id=$2 and u.id=$3`,[cid(req),p.membership_id,p.user_id])).rows[0];
+   if(row)account={id:row.id,name:row.name,email:row.email,phone:row.phone,can_edit_identity:!row.shared_company&&!row.platform_identity&&!row.ownership_identity&&row.role_code!=='admin'};
+  }
+  res.json({person:p,...h,...(req.personnelSupport?{account:account||null}:{}),access:eligibility({...p,birth_date:cleanDate(p.birth_date)},h,repo.todayIn(pol.time_zone)),roles:await repo.roles(pool),...f});
  }));
 
  app.post(BASE,gate('company.people.manage'),wrap(async(req,res)=>{

@@ -48,7 +48,7 @@ async function history(db,cid,pid,{events=true}={}){
 async function transaction(pool,cid,work){
  let db;try{
   db=await pool.connect();await db.query('BEGIN');
-  const company=(await db.query('select id,user_limit,active from companies where id=$1 for update',[cid])).rows[0];
+  const company=(await db.query('select id,user_limit,active from companies where id=$1 for no key update',[cid])).rows[0];
   if(!company||company.active!==true)throw error(404,'Empresa activa no encontrada');
   const result=await work(db,company);await db.query('COMMIT');return result;
  }catch(e){if(db)try{await db.query('ROLLBACK')}catch{}throw e;}finally{if(db)db.release();}

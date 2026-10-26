@@ -2,6 +2,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const {registerPersonnelRoutes,createBootstrapExemption}=require('../personnel-api');
 const domain=require('../personnel-domain');
+const {isPlatformOwner,resolveActorContext}=require('../auth');
 const BASE='/api/company/people';
 const permissions=['company.people.read','company.people.manage','company.licenses.manage','company.users.manage'];
 const actor={id:'1',name:'Actor servidor',actor_type:'company',scope:'company',company_id:'10',membership_id:'11',permissions};
@@ -9,7 +10,7 @@ const policy={company_id:'10',enforced:false,time_zone:'America/Santiago',regula
 const p={id:'70',company_id:'10',user_id:'42',membership_id:'71',driver_id:'8',name:'Persona',rut:'12345678-5',birth_date:'1990-01-01',job_title:'Conductor',role_id:'5',role_code:'driver',account_active:true,membership_active:true,membership_created_at:'2026-10-21T12:00:00.000Z',account_created_at:'2026-10-21T12:00:00.000Z',regularization_eligible:true};
 const sql=(pattern,values,rows=[],extra={})=>({pattern,values,rows,...extra});
 const begin=()=>sql(/^BEGIN$/,[]),commit=()=>sql(/^COMMIT$/,[]),rollback=()=>sql(/^ROLLBACK$/,[]);
-const company=()=>sql(/^select id,user_limit,active from companies where id=\$1 for update$/,['10'],[{id:'10',user_limit:20,active:true}]);
+const company=()=>sql(/^select id,user_limit,active from companies where id=\$1 for no key update$/,['10'],[{id:'10',user_limit:20,active:true}]);
 const pol=()=>sql(/^select company_id,enforced,time_zone/,['10'],[policy]);
 const membershipLock=()=>sql(/^select um.id from user_memberships um join company_people/,['10','70'],[{id:'71'}]);
 const person=(row=p,lock=true)=>sql(/^select p\.\*/,['10','70'],row?[row]:[],{check:q=>lock?assert.match(q,/for update of p$/):assert.doesNotMatch(q,/for update/)});
@@ -33,7 +34,7 @@ function harness(steps=[],user=actor,{reauth=true}={}){
  const pool={query:db.query,async connect(){connects++;return db;}};
  const app={};for(const method of ['get','post','patch','put'])app[method]=(path,...handlers)=>routes.push({method,path,handlers});
  const reauthCalls=[];
- registerPersonnelRoutes(app,pool,{resolveActorContext:req=>req.user,requirePermission:()=>{throw Error('Do not inherit a bypass');},isPlatformOwner:()=>true,
+ registerPersonnelRoutes(app,pool,{resolveActorContext:req=>req.user?.actor_type==='platform'?resolveActorContext(req):req.user,requirePermission:()=>{throw Error('Do not inherit a bypass');},isPlatformOwner,
   hashPassword:async value=>'HASH:'+value,reauthenticateUser:async(db,uid,password)=>{reauthCalls.push({db,uid,password});return reauth;}});
  return {calls,db,pool,reauthCalls,get releases(){return releases;},get connects(){return connects;},async run(method,path,{body={},params={},query={}}={}){
   const route=routes.find(r=>r.method===method&&r.path===path);assert.ok(route,`Missing route ${method} ${path}`);
@@ -203,6 +204,17 @@ test('contract replacement rolls back the void when replacement validation fails
 test('malformed driver filter is rejected before database access even with empty list',async()=>{
  const h=harness();assert.equal((await h.run('get',BASE,{query:{driver_id:'8 OR 1=1'}})).statusCode,400);
 });
+test('exact user filter rejects invalid IDs before SQL and never falls back to an unfiltered list',async()=>{
+ for(const value of ['', '42 OR 1=1', '0', '-1']){
+  const h=harness();assert.equal((await h.run('get',BASE,{query:{user_id:value}})).statusCode,400);
+ }
+ const rows=[{...p,contracts:[],conditions:[],licenses:[]},{...p,id:'80',user_id:'420',contracts:[],conditions:[],licenses:[]}];
+ for(const value of ['42','999']){
+  const h=harness([pol(),sql(/^select p.id,coalesce/,['10'],rows),sql(/^select count\(\*\)::int n from personnel_notifications/,['10','1'],[{n:0}]),sql(/^select id,code,name from roles/,[],[])]);
+  const r=await h.run('get',BASE,{query:{user_id:value}});assert.equal(r.statusCode,200);assert.equal(r.payload.total,value==='42'?1:0);
+  if(value==='42')assert.equal(r.payload.rows[0].user_id,'42');
+ }
+});
 
 const pending={...p,id:null,name:'Pendiente',role_code:'viewer',contracts:[],conditions:[],licenses:[]};
 async function pendingList(row= pending,polic=policy){
@@ -309,4 +321,37 @@ test('draft account audit failure rolls back the new user membership and person 
 });
 test('draft account compare-and-set failure is rolled back rather than returning success',async()=>{
  const h=harness([...txPerson(draft),pol(),...accountQueries(),linkDraft('viewer',[]),rollback()]);assert.equal((await h.run('post',BASE+'/:id/account',{body:accountBody})).statusCode,409);
+});
+const supportActor={...actor,actor_type:'platform',scope:'platform',company_id:null,membership_id:null,platform_membership_id:'99',role_code:'platform_superadmin',permissions:['platform.users.manage'],active_company_context:'10'};
+test('platform users manager with selected company gets full contextual flags without new permissions',async()=>{
+ const user={...supportActor,permissions:Object.freeze(['platform.users.manage'])};
+ const h=harness([pol()],user),res=await h.run('get',BASE+'/policy');
+ assert.equal(res.statusCode,200);
+ for(const flag of ['can_read','can_manage','can_accounts','can_licenses','platform_support'])assert.equal(res.payload[flag],true);
+ assert.equal(res.payload.context_company_id,'10');assert.deepEqual(user.permissions,['platform.users.manage']);assert.equal(user.company_id,null);assert.equal(user.scope,'platform');
+});
+test('verified owner without company permissions can read its selected company',async()=>{
+ const user={...supportActor,permissions:[],ownership_role:'primary',ownership_active:true};
+ const h=harness([person(p,false),...histories([],[],[],true),pol(),sql(/^select u.id,u.name,u.email,u.phone,r.code role_code/,['10','71','42'],[{id:'42',name:'Cuenta',email:'cuenta@example.test',phone:'123',role_code:'viewer',shared_company:false,platform_identity:false,ownership_identity:false}]),sql(/^select id,code,name from roles/,[],[])],user);
+ const res=await h.run('get',BASE+'/:id');assert.equal(res.statusCode,200);assert.equal(res.payload.can_accounts,true);assert.equal(res.payload.platform_support,true);assert.deepEqual(user.permissions,[]);
+ assert.equal(res.payload.account.email,'cuenta@example.test');assert.equal(res.payload.account.can_edit_identity,true);
+});
+for(const [name,user] of [
+ ['no selected company',{...supportActor,active_company_context:null}],
+ ['no platform membership',{...supportActor,platform_membership_id:null}],
+ ['no platform permission',{...supportActor,permissions:[]}],
+ ['company permissions without native platform authority',{...supportActor,permissions:['company.people.read','company.users.manage']}],
+ ['inactive ownership',{...supportActor,permissions:[],ownership_role:'primary',ownership_active:false}],
+ ['role-name impersonation',{...supportActor,permissions:[],role_code:'admin'}]
+])test(`platform personnel denies ${name}`,async()=>{
+ const h=harness([],user);assert.equal((await h.run('get',BASE)).statusCode,403);
+});
+test('platform support cannot create conditions for a person outside the selected company',async()=>{
+ const h=harness([...txPerson(null),rollback()],supportActor);
+ assert.equal((await h.run('post',BASE+'/:id/conditions',{body:{type:'vacation',start_date:'2026-01-01',end_date:'2026-01-02'}})).statusCode,404);
+});
+test('platform personnel mutation preserves native platform actor in both events and audit',async()=>{
+ const h=harness([...txPerson(),sql(/^insert into person_conditions/,['10','70','vacation','2026-01-01','2026-01-02','1'],[{id:'80'}]),event('condition_create'),audit('condition_create'),commit()],supportActor);
+ assert.equal((await h.run('post',BASE+'/:id/conditions',{body:{type:'vacation',start_date:'2026-01-01',end_date:'2026-01-02'}})).statusCode,200);
+ assert.equal(h.releases,1);assert.deepEqual(supportActor.permissions,['platform.users.manage']);
 });
