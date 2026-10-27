@@ -14,7 +14,9 @@ test('usuarios usa active real para memberships y no pm.status',()=>{
 
 test('catálogos de roles respetan la separación por código y permissions.scope',()=>{
   assert.match(auth,/where code in \('company_admin','manager','operations','maintenance','driver','viewer'\)/);
-  assert.match(auth,/where code='platform_superadmin'/);
+  assert.match(auth,/where code in \('platform_superadmin','platform_support'\)/);
+  assert.match(auth,/company_membership_permissions\(um\.id\)/);
+  assert.match(auth,/p\.scope='company'/);
   assert.doesNotMatch(auth,/select id,name,scope from roles/);
 });
 

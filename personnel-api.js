@@ -78,7 +78,7 @@ function registerPersonnelRoutes(app,pool,{resolveActorContext,requirePermission
   if(!c||c.scope!=='company'||!c.company_id||c.actor_type==='unresolved')return res.status(403).json({error:'Contexto empresarial requerido'});
   const support=c.actor_type==='platform'&&req.user.actor_type==='platform'&&Boolean(req.user.platform_membership_id)&&
    sameId(c.company_id,req.user.active_company_context)&&
-   ((req.user.permissions||[]).includes('platform.users.manage')||isPlatformOwner(req.user));
+   ((req.user.permissions||[]).includes('platform.users.manage')||isPlatformOwner(req.user)||require('./support-access').allows(req,'people'));
   // Support is scoped to this request. Never synthesize company permissions in
   // the global identity or change the actor's platform ownership/role.
   if((c.actor_type==='platform'||req.user.actor_type==='platform')?!support:!permissions.some(p=>(c.permissions||[]).includes(p)))return res.status(403).json({error:'Permiso empresarial requerido'});
@@ -315,14 +315,14 @@ function registerPersonnelRoutes(app,pool,{resolveActorContext,requirePermission
   const role=await repo.companyRole(db,req.body.role_id);
   const h=await repo.history(db,cid(req),p.id,{events:false}),pol=await repo.policy(db,cid(req));
   if(role.code==='driver'&&(!p.driver_id||!eligibility({...p,role_code:'driver',account_active:true,membership_active:true}, {...h,conditions:[]},repo.todayIn(pol.time_zone)).allowed))throw error(409,'Regulariza persona, contrato, asociación y licencia antes de asignar rol conductor');
-  const after=(await db.query('update user_memberships set role_id=$1,updated_at=now() where company_id=$2 and id=$3 and user_id=$4 returning id,role_id',[role.id,cid(req),p.membership_id,p.user_id])).rows[0];
+  const after=(await db.query('update user_memberships set role_id=$1,updated_at=now() where company_id=$2 and id=$3 and user_id=$4 returning id,role_id,access_profile_id',[role.id,cid(req),p.membership_id,p.user_id])).rows[0];
   if(!after)throw error(404,'Membership no encontrada');
   if(role.code!=='company_admin'&&p.contract_exempt){
    const revoked=(await db.query(`update company_people set contract_exempt=false,exemption_reason=$1,exemption_by=$2,exemption_at=now(),updated_by=$2,updated_at=now()
     where company_id=$3 and id=$4 returning *`,['Exención revocada por cambio de rol: '+why,actor(req),cid(req),p.id])).rows[0];
    await repo.record(db,req,cid(req),p.id,'exemption_role_revoke',p,revoked,why);
   }
-  await repo.record(db,req,cid(req),p.id,'membership_role',{role_id:p.role_id},after,why);return {membership:after};
+  await repo.record(db,req,cid(req),p.id,'membership_role',{role_id:p.role_id,access_profile_id:p.access_profile_id||null},after,why);return {membership:after};
  }));
  app.post('/api/platform/personnel/:membershipId/exemption',wrap(async(req,res)=>{
   if(!req.user)return res.status(401).json({error:'Autenticación requerida'});

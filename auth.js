@@ -41,7 +41,7 @@ function isPlatformOwner(user){
 async function userView(pool,userId){
   const r = await pool.query(`select u.id,u.name,u.email,u.phone,u.company_id,u.driver_id,u.role_id,
     lr.code role_code,lr.name role_name,c.legal_name company_name,
-    coalesce((select json_agg(json_build_object('id',um.id,'company_id',um.company_id,'active',um.active,'role_code',mr.code,'role_name',mr.name,'permissions',coalesce((select json_agg(p.code order by p.code) from role_permissions rp join permissions p on p.id=rp.permission_id where rp.role_id=um.role_id and p.scope='company'),'[]'::json))) from user_memberships um left join roles mr on mr.id=um.role_id where um.user_id=u.id and um.active=true),'[]'::json) memberships,
+    coalesce((select json_agg(json_build_object('id',um.id,'company_id',um.company_id,'active',um.active,'role_code',mr.code,'role_name',coalesce((select ap.name from company_access_profiles ap where ap.id=um.access_profile_id and ap.company_id=um.company_id),mr.name),'permissions',coalesce((select json_agg(p.code order by p.code) from company_membership_permissions(um.id) mp join permissions p on p.code=mp.code where p.scope='company'),'[]'::json))) from user_memberships um left join roles mr on mr.id=um.role_id where um.user_id=u.id and um.active=true),'[]'::json) memberships,
     coalesce((select json_agg(json_build_object('id',pm.id,'active',pm.active,'role_code',pr.code,'role_name',pr.name,'permissions',coalesce((select json_agg(p.code order by p.code) from role_permissions rp join permissions p on p.id=rp.permission_id where rp.role_id=pm.role_id and p.scope='platform'),'[]'::json))) from platform_memberships pm left join roles pr on pr.id=pm.role_id where pm.user_id=u.id and pm.active=true),'[]'::json) platform_memberships,
     coalesce((select json_agg(p.code order by p.code) from role_permissions rp join permissions p on p.id=rp.permission_id where rp.role_id=u.role_id),'[]'::json) legacy_permissions,
     po.owner_type ownership_role,po.slot ownership_slot,po.active ownership_active,u.must_change_password,
@@ -216,7 +216,7 @@ function registerAuthRoutes(app,pool){
   const roleForScope = async (db,roleId,scope) => {
     const r=(await db.query('select id,code,name from roles where id=$1',[roleId])).rows[0];
     if(!r) return null;
-    const platformRole=new Set(['platform_superadmin']).has(r.code);
+    const platformRole=new Set(['platform_superadmin','platform_support']).has(r.code);
     const companyRole=new Set(['company_admin','manager','operations','maintenance','driver','viewer','administrative']).has(r.code);
     return (scope==='platform'?platformRole:companyRole)?r:null;
   };
@@ -279,7 +279,7 @@ function registerAuthRoutes(app,pool){
   });
   app.get('/api/roles',...protectedUserRoutes,async(req,res)=>{try{res.json((await pool.query('select id,code,name,description from roles order by id')).rows)}catch{res.status(500).json({error:'No se pudieron consultar los roles'})}});
   app.get('/api/company-roles',...protectedUserRoutes,async(req,res)=>{try{res.json((await pool.query("select id,code,name,description from roles where code in ('company_admin','manager','operations','maintenance','driver','viewer') order by id")).rows)}catch{res.status(500).json({error:'No se pudieron consultar los roles de empresa'})}});
-  app.get('/api/platform-roles',...protectedUserRoutes,async(req,res)=>{if(req.user.actor_type!=='platform')return res.status(403).json({error:'Solo plataforma puede consultar roles de plataforma'});try{res.json((await pool.query("select id,code,name,description from roles where code='platform_superadmin' order by id")).rows)}catch{res.status(500).json({error:'No se pudieron consultar los roles de plataforma'})}});
+  app.get('/api/platform-roles',...protectedUserRoutes,async(req,res)=>{if(req.user.actor_type!=='platform')return res.status(403).json({error:'Solo plataforma puede consultar roles de plataforma'});try{res.json((await pool.query("select id,code,name,description from roles where code in ('platform_superadmin','platform_support') order by id")).rows)}catch{res.status(500).json({error:'No se pudieron consultar los roles de plataforma'})}});
   app.get('/api/users',...protectedUserRoutes,async(req,res)=>{
     try{
       const context=resolveActorContext(req);
@@ -481,6 +481,7 @@ async function authMiddleware(pool,req,res,next){
     user.active_company_context=companyId;
   }
   req.user=user;
+  if(require('./support-access').restricted(user)){try{await require('./support-access').authorizeSupport(pool,req)}catch(e){return res.status(e.status||503).json({error:e.status?e.message:'No se pudo validar el acceso de soporte'})}}
   if(user.scope==='company'&&user.company_id){
     const hasCompanyMembership=(user.memberships||[]).some(m=>m.active!==false);
     if(hasCompanyMembership&&!user.personnel_state)return res.status(500).json({error:'No se pudo validar el estado laboral'});

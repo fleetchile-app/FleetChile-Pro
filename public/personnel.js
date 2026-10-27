@@ -13,7 +13,7 @@
   const sessionKey=()=>[window.Auth?.token||'',window.Auth?.user?.id||'',window.Auth?.user?.company_id||'',window.localStorage?.getItem('fleet_company_context')||''].join(':');
   const companyName=()=>document.getElementById('activeCompanyName')?.textContent||window.Auth?.user?.company_name||'Empresa autorizada';
   const supportContext=()=>Boolean(window.Auth?.user?.actor_type==='platform'&&id(window.Auth.user.platform_membership_id)&&id(window.localStorage?.getItem('fleet_company_context'))&&
-    (window.Auth.user.permissions?.includes('platform.users.manage')||(window.Auth.user.ownership_role&&window.Auth.user.ownership_active===true)));
+    (window.Auth.user.permissions?.includes('platform.users.manage')||window.Auth.user.role_code==='platform_support'||(window.Auth.user.ownership_role&&window.Auth.user.ownership_active===true)));
   const canRead=()=>Boolean(window.Auth?.user?.permissions?.some(permission=>['company.people.read','company.people.manage'].includes(permission))||data?.can_manage);
   const live=(version=revision)=>version===revision&&session===sessionKey()&&root?.isConnected!==false&&document.getElementById('personnel-root')===root;
   const selected=(a,b)=>String(a??'')===String(b??'')?' selected':'';

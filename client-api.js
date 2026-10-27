@@ -172,4 +172,4 @@ function registerClientRoutes(app,pool,{storageFactory=createStorage}={}){
   });res.json({status:'revoked',consent_is_blocking:false});
  }));
 }
-module.exports={registerClientRoutes};
+module.exports={registerClientRoutes,validateRelations,event};

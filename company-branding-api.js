@@ -6,7 +6,7 @@ function company(req){const a=resolveActorContext(req);if(a?.scope!=='company'||
 function error(res,e){const status=[400,403,404,409].includes(e.status)?e.status:500;return res.status(status).json({error:status===500?'No se pudo gestionar la identidad empresarial':e.message});}
 function registerCompanyBrandingRoutes(app,pool){
  app.get('/api/company/branding',async(req,res)=>{try{const b=await B.loadBranding(pool,company(req));res.json(B.publicBranding(b))}catch(e){error(res,e)}});
- const edit=(req,res,next)=>{try{company(req);const actor=resolveActorContext(req);return (actor.actor_type==='platform'?requirePlatformPermission('platform.companies.manage'):requirePermission('company.users.manage'))(req,res,next)}catch(e){error(res,e)}};
+ const edit=(req,res,next)=>{try{company(req);if(require('./support-access').allows(req,'branding'))return next();const actor=resolveActorContext(req);return (actor.actor_type==='platform'?requirePlatformPermission('platform.companies.manage'):requirePermission('company.users.manage'))(req,res,next)}catch(e){error(res,e)}};
  app.put('/api/company/branding',edit,async(req,res)=>{
   let db;
   try{

@@ -72,6 +72,8 @@ app.use("/api",authMiddleware.bind(null,pool));
 app.use('/api',require('./commercial-gate').commercialGate(pool));
 require('./commercial-api').registerCommercialRoutes(app,pool);
 require('./company-branding-api').registerCompanyBrandingRoutes(app,pool);
+require('./enterprise-api').registerEnterpriseRoutes(app,pool);
+require('./import-api').registerImportRoutes(app,pool);
 registerCoreRoutes(app,pool);
 registerOperationsRoutes(app,pool);
 registerFleetRoutes(app,pool);

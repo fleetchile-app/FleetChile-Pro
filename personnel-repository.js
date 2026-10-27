@@ -32,7 +32,7 @@ async function companyRole(db,value){
 async function person(db,cid,pid,{lock=false}={}){
  if(lock)await db.query(`select um.id from user_memberships um join company_people p on p.membership_id=um.id and p.company_id=um.company_id
   where p.company_id=$1 and p.id=$2 for update of um`,[cid,pid]);
- const p=(await db.query(`select p.*,p.birth_date::text birth_date,um.role_id,um.active membership_active,r.code role_code,r.name role_name,u.active account_active
+ const p=(await db.query(`select p.*,p.birth_date::text birth_date,um.role_id,um.access_profile_id,um.active membership_active,r.code role_code,coalesce((select ap.name from company_access_profiles ap where ap.id=um.access_profile_id and ap.company_id=um.company_id),r.name) role_name,u.active account_active
  from company_people p left join user_memberships um on um.id=p.membership_id and um.company_id=p.company_id and um.user_id=p.user_id
  left join roles r on r.id=um.role_id left join users u on u.id=p.user_id
  where p.company_id=$1 and p.id=$2${lock?' for update of p':''}`,[cid,pid])).rows[0];

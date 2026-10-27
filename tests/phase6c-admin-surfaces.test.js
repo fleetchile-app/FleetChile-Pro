@@ -19,5 +19,6 @@ test('6-C evita llamadas platform-only desde company admin',()=>{
 test('6-C ofrece catálogos de roles separados por scope en backend',()=>{
   assert.match(auth,/\/api\/company-roles/);
   assert.match(auth,/\/api\/platform-roles/);
-  assert.match(auth,/code='platform_superadmin'/);
+  assert.match(auth,/where code in \('platform_superadmin','platform_support'\) order by id/);
+  assert.match(auth,/companyRole=new Set\(\['company_admin','manager','operations','maintenance','driver','viewer','administrative'\]\)/);
 });
