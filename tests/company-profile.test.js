@@ -5,7 +5,7 @@ const companyActor={id:1,company_id:20,company_name:'Empresa legacy B',role_code
 companyActor.personnel_state={company_id:10,policy:{enforced:false,time_zone:'America/Santiago'},regularization_eligible:true,person:null,membership:{active:true,role_code:'company_admin'},account_active:true,contracts:[],conditions:[],licenses:[]};
 const record={id:10,legal_name:'Empresa A',rut:'RUT registrado',trade_name:'Nombre comercial',email:'contacto@example.test',phone:'Teléfono registrado',address:'Dirección registrada',commune:'Comuna registrada',region:'Región registrada',active:true,plan_code:'plan_registrado',license_status:'active',license_started_at:'2026-10-01',license_expires_at:null,capabilities:{fleet:true,gps:false},user_limit:50,truck_limit:20,registered_users:3,active_users:2,trucks:4,secret_billing_key:'NO EXPONER'};
 
-function setup({actor=companyActor,row=record,dbError=false}={}){
+function setup({actor=companyActor,row=record,dbError=false,commercial=null}={}){
  const calls=[],routes=[],failures=[];
  const pool={async query(sql,values=[]){
   calls.push({sql,values});
@@ -13,6 +13,7 @@ function setup({actor=companyActor,row=record,dbError=false}={}){
   if(sql.startsWith('select u.id,u.name,u.email,u.phone,u.active'))return {rows:actor?[{...actor,active:true,personnel_state:actor.personnel_state}]:[],rowCount:actor?1:0};
   if(sql.includes('po.owner_type ownership_role'))return {rows:[actor],rowCount:1};
   if(sql.startsWith('update user_sessions'))return {rows:[],rowCount:0};
+  if(sql.startsWith('select * from commercial_current')||sql.startsWith('select * from commercial_contracts'))return {rows:commercial?[commercial]:[],rowCount:commercial?1:0};
   if(sql==='select id from companies where id=$1 and active=true'){assert.deepEqual(values,[10]);return {rows:[{id:10}],rowCount:1}}
   if(sql.startsWith('select c.id,c.legal_name')){
    try{
@@ -48,6 +49,11 @@ test('ficha propia se deriva de membership A e ignora query/body B; licencia no 
  assert.equal(s.calls.filter(call=>call.sql.startsWith('select c.id')).length,1);
  assert.ok(s.calls.every(call=>!/^\s*(insert|delete|alter|begin|commit)\b/i.test(call.sql)));
  assert.equal(s.routes.filter(route=>route.path==='/api/company/profile').length,1);assert.equal(s.routes.find(route=>route.path==='/api/company/profile').method,'get');
+});
+
+test('ficha comercial distingue techo de cinco, tres pagados y módulos efectivos, sin usar límites históricos',async()=>{
+ const commercial={period_from:new Date(Date.now()-86400000),period_until:new Date(Date.now()+86400000),configuration:{plan_code:'plan_comercial',max_equipment:5,quantities:{truck:3,tractor:0,trailer:0,equipment:0},modules:['operations','maintenance']}};
+ const s=setup({row:{...record,commercial_enforced:true},commercial}),r=await s.request();assert.equal(r.statusCode,200);assert.equal(r.payload.license.truck_limit,5);assert.equal(r.payload.license.contracted_equipment,3);assert.equal(r.payload.license.plan_code,'plan_comercial');assert.equal(r.payload.license.capabilities.maintenance,true);assert.equal(r.payload.license.capabilities.gps,false);assert.equal(r.payload.license.user_limit,null);
 });
 
 for(const [name,actor,status] of [

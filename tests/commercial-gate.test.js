@@ -1,0 +1,20 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');
+const {commercialGate}=require('../commercial-gate');
+const actor={id:1,company_id:2,actor_type:'company',scope:'company',membership_id:1,permissions:['fleet.manage','trips.manage','maintenance.manage']};
+const response=()=>({statusCode:200,status(n){this.statusCode=n;return this;},json(v){this.payload=v;return this;}});
+function pool({enforced=true,modules=null,trip=null,maintenance=null,fail=false,runningGps=false}={}){return {async query(sql){if(fail)throw Error('DB error');if(sql.includes('from companies'))return {rows:[{commercial_enforced:enforced}]};if(sql.includes('commercial_current'))return {rows:modules?[{configuration:{modules}}]:[]};if(sql.includes('commercial_running_gps'))return {rows:[{allowed:runningGps}]};if(sql.includes('from trips'))return {rows:trip?[trip]:[]};if(sql.includes('from maintenance'))return {rows:maintenance?[maintenance]:[]};throw Error('Unexpected SQL');}};}
+async function call(db,url,{method='POST',body={},user=actor,query={}}={}){const res=response();let allowed=false;await commercialGate(db)({user,method,body,query,originalUrl:url},res,()=>{allowed=true;});return {res,allowed};}
+test('control comercial no amplía RBAC ni bloquea autenticación y gestión de capacidad',async()=>{for(const url of ['/api/auth/me','/api/company/commercial/requests','/api/platform/commercial/plans'])assert.equal((await call(pool({fail:true}),url)).allowed,true);});
+test('cliente anterior permanece en regularización; cliente controlado sin pago no crea servicios',async()=>{assert.equal((await call(pool({enforced:false}),'/api/trips')).allowed,true);assert.equal((await call(pool(),'/api/trips')).res.statusCode,403);assert.equal((await call(pool({modules:['maintenance']}),'/api/trips')).res.payload.code,'MODULE_NOT_CONTRACTED');});
+test('viaje iniciado conserva finalización y hechos con sus módulos originales, no recibe funciones gratuitas',async()=>{
+ const db=pool({trip:{status:'En tránsito',commercial_modules:['operations','pod']}});
+ assert.equal((await call(db,'/api/driver/trips/3/status',{method:'PATCH',body:{status:'Completado'}})).allowed,true);
+ assert.equal((await call(db,'/api/driver/trips/3/deliveries')).allowed,true);
+ assert.equal((await call(pool({trip:{status:'En tránsito',commercial_modules:['operations']}}),'/api/driver/trips/3/deliveries')).res.statusCode,403);
+ assert.equal((await call(pool({trip:{status:'Asignado',commercial_modules:['operations']}}),'/api/driver/trips/3/status',{method:'PATCH',body:{status:'En tránsito'}})).res.statusCode,403);
+});
+test('mantención en curso puede liberarse, pero un ingreso pendiente no se inicia sin módulo',async()=>{assert.equal((await call(pool({maintenance:{status:'En proceso'}}),'/api/fleet/work-orders/4/release')).allowed,true);assert.equal((await call(pool({maintenance:{status:'Pendiente'}}),'/api/fleet/work-orders/4/receive')).res.statusCode,403);});
+test('historial sigue consultable; GPS vivo y reportes requieren contratación, errores no abren acceso',async()=>{assert.equal((await call(pool(),'/api/trucks/4/history',{method:'GET'})).allowed,true);assert.equal((await call(pool(),'/api/fleet/trucks/4/position',{method:'GET'})).res.statusCode,403);assert.equal((await call(pool(),'/api/economics/reports',{method:'GET'})).res.statusCode,403);assert.equal((await call(pool({fail:true}),'/api/trips')).res.statusCode,503);});
+test('mayúsculas y barra final admitidas por Express no eluden el control comercial',async()=>{for(const path of ['/API/ECONOMICS/TRIPS/2/COSTS/','/API/FLEET/WORK-ORDERS/','/api/fleet/work-orders/'])assert.equal((await call(pool(),path)).res.statusCode,403);});
+test('vencimiento no corta el GPS ya contratado de una operación vigente, sin habilitar otras nuevas',async()=>{assert.equal((await call(pool({runningGps:true}),'/api/driver/trips/3/positions')).allowed,true);assert.equal((await call(pool({runningGps:true}),'/api/fleet/trucks/4/position',{method:'GET'})).allowed,true);assert.equal((await call(pool(),'/api/driver/trips/3/positions')).res.statusCode,403);});
