@@ -46,6 +46,16 @@ test('generador crea mantenciones próximas, vencidas por fecha/odómetro y cami
  assert.equal(res.statusCode,200);const codes=pool.insertedAlerts.map(x=>x.condition_code);for(const code of ['maintenance_due_date','maintenance_overdue_date','maintenance_overdue_odometer','truck_maintenance_status'])assert.ok(codes.includes(code));assert.equal(pool.insertedAlerts.find(x=>x.condition_code==='maintenance_due_date').level,'warning');assert.equal(pool.insertedAlerts.find(x=>x.condition_code==='maintenance_overdue_date').level,'critical');assert.equal(pool.insertedAlerts.find(x=>x.condition_code==='maintenance_overdue_odometer').level,'critical');assert.equal(pool.calls[0].sql,'BEGIN');assert.equal(pool.calls.at(-1).sql,'COMMIT');assert.equal(pool.releases,1);
 });
 
+test('horómetro dispara alarma sin inventar vencimiento de una fecha futura',async()=>{
+ const pool=generatorPool(),connect=pool.connect.bind(pool);
+ pool.connect=async()=>{const db=await connect(),query=db.query.bind(db);return {release:()=>db.release(),async query(sql,v){
+  if(sql.startsWith('select m.id,m.item')){assert.match(sql,/t\.hour_meter_hours>=m\.next_due_hours/);return {rows:[{id:44,item:'Servicio por horas',next_due_date:'2099-12-31',due_date_reached:false,overdue_date:false,next_due_odometer_km:null,next_due_hours:100,hour_meter_hours:101,patente:'MW-H',km:500}]};}
+  return query(sql,v);
+ }};};
+ const app=await alertApp(pool),r=await invoke(app.route('post','/api/fleet/alerts/generate'));assert.equal(r.statusCode,200);
+ const rows=pool.insertedAlerts.filter(a=>a.source_id===44);assert.equal(rows.length,1);assert.equal(rows[0].condition_code,'maintenance_overdue_hours');assert.equal(rows[0].level,'critical');
+});
+
 test('generador crea documentos próximos/vencidos con company scope de vehículo y conductor',async()=>{
  const pool=generatorPool();const app=await alertApp(pool);await invoke(app.route('post','/api/fleet/alerts/generate'));const codes=pool.insertedAlerts.map(x=>x.condition_code);for(const code of ['vehicle_document_due','vehicle_document_expired','driver_document_due','driver_document_expired'])assert.ok(codes.includes(code));for(const alert of pool.insertedAlerts.filter(x=>x.condition_code.endsWith('_expired')))assert.equal(alert.level,'critical');for(const alert of pool.insertedAlerts.filter(x=>x.condition_code.endsWith('_due')))assert.equal(alert.level,'warning');
 });

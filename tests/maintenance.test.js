@@ -9,26 +9,19 @@ function mockPool(resolver){const calls=[];let releases=0;const client={async qu
 async function maintenanceApp(pool){const app=fakeApp();await registerFleetRoutes(app,pool);return app}
 const validBody={truck_id:3,item:'Cambio de aceite',maintenance_type:'Preventiva',status:'Pendiente',due:'2026-09-01',performed_at:'2026-08-19',odometer_km:10500,workshop:'Taller Norte',notes:'Control',parts_description:'Filtro y aceite',parts_cost_clp:90000,labor_cost_clp:30000,next_due_date:'2027-02-19',next_due_odometer_km:20500};
 
-test('mantención crea registro canónico, calcula total y audita antes de COMMIT',async()=>{
- const created={id:41,company_id:10,truck:'ABCD12',truck_id:3,...validBody,cost_clp:120000};
- const pool=mockPool(async(sql,values)=>{if(sql==='BEGIN'||sql==='COMMIT')return {rows:[],rowCount:0};if(sql.startsWith('select id,company_id,patente from trucks')){assert.deepEqual(values,[3,10]);return {rows:[{id:3,company_id:10,patente:'ABCD12'}],rowCount:1}}if(sql.startsWith('insert into maintenance')){assert.equal(values[5],120000);assert.equal(values[13],90000);assert.equal(values[14],30000);return {rows:[created],rowCount:1}}if(sql.startsWith('insert into audit_logs')){assert.equal(values[0],10);assert.equal(values[1],7);assert.equal(values[2],'create');assert.equal(values[3],'maintenance');assert.equal(values[4],'41');assert.equal(values[6].cost_clp,120000);return {rows:[],rowCount:1}}throw new Error(`Consulta inesperada: ${sql}`)});
- const app=await maintenanceApp(pool);const res=await invoke(app.route('post','/api/fleet/maintenance'),{body:{...validBody,cost_clp:1}});
- assert.equal(res.statusCode,201);assert.equal(res.payload.cost_clp,120000);assert.deepEqual(pool.calls.map(c=>c.sql==='BEGIN'||c.sql==='COMMIT'?c.sql:c.sql.startsWith('select')?'TRUCK':c.sql.startsWith('insert into maintenance')?'INSERT':'AUDIT'),['BEGIN','TRUCK','INSERT','AUDIT','COMMIT']);assert.equal(pool.releases,1);
+test('altas antiguas remiten al ingreso operacional sin consultar ni escribir',async()=>{
+ const pool={connect(){throw Error('No debe conectar');},query(){throw Error('No debe consultar');}};
+ const app=await maintenanceApp(pool),res=await invoke(app.route('post','/api/fleet/maintenance'),{body:{truck_id:3,item:'Ingreso sin costo'}});
+ assert.equal(res.statusCode,410);assert.equal(res.payload.code,'WORK_ORDER_REQUIRED');assert.match(res.payload.error,/work-orders/);
 });
 
-test('mantención rechaza camión inexistente o cross-company sin insertar ni auditar',async()=>{
- const pool=mockPool(async sql=>{if(sql==='BEGIN'||sql==='ROLLBACK')return {rows:[],rowCount:0};if(sql.startsWith('select id,company_id,patente from trucks'))return {rows:[],rowCount:0};throw new Error(`Consulta inesperada: ${sql}`)});
- const app=await maintenanceApp(pool);const res=await invoke(app.route('post','/api/fleet/maintenance'),{body:validBody});assert.equal(res.statusCode,404);assert.equal(pool.calls.some(c=>c.sql.startsWith('insert into maintenance')),false);assert.equal(pool.calls.some(c=>c.sql.startsWith('insert into audit_logs')),false);assert.equal(pool.calls.some(c=>c.sql==='COMMIT'),false);assert.equal(pool.releases,1);
-});
-
-test('mantención valida tipo, estado, fechas, odómetros y costos antes de conectar',async()=>{
- const pool={async connect(){throw new Error('No debe conectar')},async query(){throw new Error('No debe consultar')}};const app=await maintenanceApp(pool);const route=app.route('post','/api/fleet/maintenance');
- const cases=[[{...validBody,maintenance_type:'Predictiva'},'maintenance_type no válido'],[{...validBody,status:'Programada'},'status no válido'],[{...validBody,due:'2026-02-30'},'Fecha no válida'],[{...validBody,odometer_km:-1},'odometer_km no válido'],[{...validBody,next_due_odometer_km:-1},'next_due_odometer_km no válido'],[{...validBody,parts_cost_clp:-1},'costos no válidos'],[{...validBody,labor_cost_clp:'x'},'costos no válidos']];
- for(const [body,error] of cases){const res=await invoke(route,{body});assert.equal(res.statusCode,400);assert.deepEqual(res.payload,{error})}
-});
-
-test('mantención revierte por fallo de INSERT o auditoría y libera una vez',async()=>{
- for(const failure of ['insert','audit']){const pool=mockPool(async sql=>{if(sql==='BEGIN'||sql==='ROLLBACK')return {rows:[],rowCount:0};if(sql.startsWith('select id,company_id,patente from trucks'))return {rows:[{id:3,company_id:10,patente:'ABCD12'}],rowCount:1};if(sql.startsWith('insert into maintenance')){if(failure==='insert')throw new Error('insert failed');return {rows:[{id:41,company_id:10,truck_id:3}],rowCount:1}}if(sql.startsWith('insert into audit_logs'))throw new Error('audit failed');throw new Error(`Consulta inesperada: ${sql}`)});const app=await maintenanceApp(pool);const res=await invoke(app.route('post','/api/fleet/maintenance'),{body:validBody});assert.equal(res.statusCode,400);assert.equal(pool.calls.at(-1).sql,'ROLLBACK');assert.equal(pool.calls.some(c=>c.sql==='COMMIT'),false);assert.equal(pool.releases,1)}
+test('PATCH antiguo no puede reescribir una orden operacional ni omitir su versión',async()=>{
+ const calls=[],pool=mockPool(async sql=>{calls.push(sql);if(['BEGIN','ROLLBACK'].includes(sql))return {rows:[]};
+  if(sql.includes('from maintenance m'))return {rows:[{id:41,company_id:10,operation_stage:'received'}]};
+  throw Error('No debe mutar: '+sql);
+ });
+ const app=await maintenanceApp(pool),res=await invoke(app.route('patch','/api/fleet/maintenance/:id'),{params:{id:'41'},body:{status:'Completada'}});
+ assert.equal(res.statusCode,409);assert.equal(res.payload.code,'WORK_ORDER_REQUIRED');assert.equal(calls.at(-1),'ROLLBACK');
 });
 
 test('PATCH bloquea, conserva BEFORE, completa y audita AFTER sin modificar trucks.status',async()=>{
