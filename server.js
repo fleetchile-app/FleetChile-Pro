@@ -74,6 +74,7 @@ registerOperationsRoutes(app,pool);
 registerFleetRoutes(app,pool);
 registerGeographyRoutes(app,pool,createGeocoder());
 registerRoutingRoutes(app,pool,createRoutingAdapter());
+require('./itinerary-api').registerItineraryRoutes(app,pool,createRoutingAdapter());
 registerAdminRoutes(app,pool);
 registerEconomicsRoutes(app,pool);
 

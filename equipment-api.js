@@ -92,7 +92,7 @@ function registerEquipmentRoutes(app,pool){
   res.json({trip,current:await observedResources(pool,cid,trip),history,total,page,page_size:25});
  });
  route('patch',OPS+'/:id/resources',requirePermission('trips.manage'),async(req,res,cid)=>{
-  const b=req.body||{},allowed=new Set(['resource_version','composition_id','composition_version','truck_id','trailer_id','driver_id','client_id','route_id','reason']);
+  const b=req.body||{},allowed=new Set(['resource_version','composition_id','composition_version','truck_id','trailer_id','driver_id','client_id','route_id','reason','itinerary_review']);
   if(Object.keys(b).some(k=>!allowed.has(k)))throw E.fail('Campo de asignación no permitido');
   if(!Object.hasOwn(b,'composition_id'))throw E.fail('Indica conjunto o asignación individual explícitamente');
   if(!Object.hasOwn(b,'driver_id'))throw E.fail('Indica el conductor o su asignación pendiente explícitamente');
@@ -132,6 +132,7 @@ function registerEquipmentRoutes(app,pool){
     status=case when status='Planificado' and $1::integer is not null and $3::integer is not null then 'Asignado' else status end,updated_at=now()
     where id=$9 and company_id=$10 returning *`,[truckId,trailerId,driverId,clientId,routeId,compositionId,equipment,nextVersion,current.id,cid])).rows[0];
    if(current.resource_version===0)await revision(db,req,current,0,before,'Estado observado antes de iniciar el historial versionado; fecha inicial desconocida',true);
+   next.itinerary_version=await require('./itinerary-api').reviewEquipmentChange(db,req,next,b.itinerary_review,reason);
    const after=await observedResources(db,cid,next);await revision(db,req,next,nextVersion,after,reason||'Asignación de recursos');
    if(next.status!==current.status)await db.query('insert into trip_status_history(trip_id,from_status,to_status,notes,created_by) values($1,$2,$3,$4,$5)',[next.id,current.status,next.status,reason||'Recursos asignados',req.user.id]);
    await db.query('insert into trip_events(trip_id,event_type,notes,created_by,details) values($1,$2,$3,$4,$5)',[next.id,changed?'Reasignación de recursos':'Confirmación de recursos',reason||'Asignación de recursos',req.user.id,{before,after,resource_version:nextVersion}]);

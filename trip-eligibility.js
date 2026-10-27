@@ -18,13 +18,16 @@ async function assertTripResourcesReady(db,{companyId,truckId,driverId,trailerId
   E.pair(rows.find(v=>String(v.id)===String(truckId)),rows.find(v=>String(v.id)===String(trailerId)));
   for(const id of ids)await assertVehicleRoadReady(db,{companyId,truckId:id,now,primary:String(id)===String(truckId)});
  }else if(truckId)await assertVehicleRoadReady(db,{companyId,truckId,now,lock:true,primary:true});
+ if(schedule.itineraryVersion>0&&schedule.tripId){
+  await require('./itinerary-api').checkItinerary(db,{id:schedule.tripId,company_id:companyId,itinerary_version:schedule.itineraryVersion,truck_id:truckId,trailer_id:trailerId});
+ }
  E.windowCheck(compositionSnapshot,{...schedule,now:now||new Date()});
  await assertTripAvailability(db,{companyId,truckId,driverId,trailerId,...schedule});
 }
 const requiresRoadAuthorization=status=>['Asignado','En carga','En tránsito'].includes(status);
 function resourceFailure(res,error,fallback,{hideConflicts=false}={}){
  if(hideConflicts&&error?.code==='TRIP_RESOURCE_CONFLICT')return res.status(409).json({code:error.code,error:'El camión o conductor tiene otra reserva incompatible. Contacta a operaciones para revisar la asignación.'});
- if(error?.status&&['VEHICLE_NOT_ROAD_READY','DRIVER_NOT_OPERATIONAL_READY','TRIP_RESOURCE_CONFLICT','INVALID_TRIP_INTERVAL','EQUIPMENT_INVALID','COMPOSITION_OUTSIDE_WINDOW'].includes(error.code))return res.status(error.status).json({code:error.code,error:error.message,reasons:error.reasons||[],...(error.details?{details:error.details}:{})});
+ if(error?.status&&(error.code?.startsWith('ITINERARY_')||['VEHICLE_NOT_ROAD_READY','DRIVER_NOT_OPERATIONAL_READY','TRIP_RESOURCE_CONFLICT','INVALID_TRIP_INTERVAL','EQUIPMENT_INVALID','COMPOSITION_OUTSIDE_WINDOW'].includes(error.code)))return res.status(error.status).json({code:error.code,error:error.message,reasons:error.reasons||[],...(error.details?{details:error.details}:{})});
  return res.status(400).json({error:fallback});
 }
 module.exports={assertTripResourcesReady,requiresRoadAuthorization,resourceFailure};

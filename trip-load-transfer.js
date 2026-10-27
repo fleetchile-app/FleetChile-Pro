@@ -25,6 +25,7 @@ function registerTripLoadTransfer(app,pool,{requirePermission,tripScope}){
       if(proof){await db.query('ROLLBACK');return res.status(409).json({error:'La carga tiene un POD o borrador asociado y requiere revisión antes de transferirse'})}
       const updated=(await db.query('update trip_loads set trip_id=$1 where id=$2 and trip_id=$3 returning *',[to.id,load.id,from.id])).rows[0];
       if(!updated)throw new Error('No se pudo transferir la carga bloqueada');
+      await require('./itinerary-api').transferredLoad(db,req,from,load.id,reason);
       const details={load_id:load.id,source_trip_id:from.id,target_trip_id:to.id,reason};
       for(const trip of [from,to])await db.query('insert into trip_events(trip_id,event_type,notes,created_by,details) values($1,$2,$3,$4,$5)',[trip.id,'Reasignación de carga',reason,req.user.id,details]);
       await writeAudit(db,req,{companyId:source.company_id,action:'transfer',entity:'trip_load',entityId:load.id,beforeData:load,afterData:{...updated,transfer:details}});
