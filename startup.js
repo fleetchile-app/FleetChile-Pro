@@ -12,6 +12,7 @@ MIGRATION_FILES.push('035_trip_itineraries.sql');
 MIGRATION_FILES.push('036_economic_integration.sql');
 MIGRATION_FILES.push('037_driver_mobile_workflow.sql');
 MIGRATION_FILES.push('038_commercial_entitlements.sql');
+MIGRATION_FILES.push('039_company_branding.sql');
 
 function timeoutMs(value,fallback){
   const parsed=Number(value);

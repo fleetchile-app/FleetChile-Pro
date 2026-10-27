@@ -14,7 +14,7 @@ test('fallback HTML solo para navegación driver, nunca para JavaScript faltante
  const s=shell();assert.equal(await s.fetch('/driver?trip=1','navigate'),'static html');s.cache.delete('/driver.js');await assert.rejects(s.fetch('/driver.js'),/offline/);
 });
 test('actualización del shell elimina únicamente sus versiones anteriores',async()=>{
- const s=shell();let promise;s.listeners.activate({waitUntil:p=>{promise=p;}});await promise;assert.deepEqual(s.deleted,['fleetchile-driver-shell-v1']);
+ const s=shell();let promise;s.listeners.activate({waitUntil:p=>{promise=p;}});await promise;assert.deepEqual(s.deleted,['fleetchile-driver-shell-v1','fleetchile-driver-shell-v2']);
 });
 test('authBoot de conductor preserva token ante red caída pero cierra sesión inválida',async()=>{
  const source=fs.readFileSync(require.resolve('../public/auth'),'utf8').split(/\r?\n/).find(l=>l.startsWith('async function authBoot'));

@@ -19,7 +19,7 @@
     const general=['platform.companies.manage','platform.users.manage'].some(permission=>u.permissions?.includes(permission));
     const companies=owner(u)||u.permissions?.includes('platform.companies.manage');
     const users=owner(u)||u.permissions?.includes('platform.users.manage');
-    return [['overview','Resumen global',general],['organization','Empresas y licencias',companies],['commercial-plans','Planes comerciales',companies],['users','Usuarios',users],['roles','Roles y permisos',users&&general],['owners','Propietarios',owner(u)],['settings','Configuración global',general],['audit','Auditoría',general]].filter(item=>item[2]).map(([key,label])=>[key,label]);
+    return [['overview','Resumen global',general],['organization','Empresas y licencias',companies],['commercial-plans','Planes comerciales',companies],['company-branding','Personalización de empresa',companies],['users','Usuarios',users],['roles','Roles y permisos',users&&general],['owners','Propietarios',owner(u)],['settings','Configuración global',general],['audit','Auditoría',general]].filter(item=>item[2]).map(([key,label])=>[key,label]);
   }
   const get=async u=>{const revision=adminRevision;if(window.adminSurface==='company'&&u==='companies')return [];const r=await fetch('/api/'+u);const d=await r.json();if(revision!==adminRevision)throw Object.assign(Error('Vista reemplazada'),{stale:true});if(!r.ok)throw Error(d.error||'No se pudo cargar');if(window.adminSurface==='company'&&u==='roles')return d.filter(x=>['company_admin','manager','operations','maintenance','driver','viewer'].includes(x.code));return d};
   const patch=async(u,o)=>{const r=await fetch('/api/'+u,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});const d=await r.json();if(!r.ok)throw Error(d.error||'No se pudo guardar');return d};
@@ -29,6 +29,7 @@
     const clean=String(name||'FleetChile').trim()||'FleetChile';
     document.querySelectorAll('.brand strong').forEach(el=>el.textContent=clean);
     document.title=clean+' Pro';
+    window.CompanyBranding?.paint();
   }
   async function loadPublicBranding(){
     try{const s=await get('public/settings');const raw=s['appearance.company_name'];const name=typeof raw==='string'?raw.replace(/^"|"$/g,''):raw;applyBranding(name)}catch(e){/* la aplicación conserva el nombre por defecto */}
@@ -73,7 +74,7 @@
     document.addEventListener('keydown',event=>{if(event.key==='Escape'&&document.getElementById('platformAdminLinks')?.hidden===false){window.togglePlatformAdminMenu(false);document.getElementById('platformAdminToggle')?.focus()}});
     document.addEventListener('click',event=>{const host=document.getElementById('platformAdminMenuHost');if(host&&!host.contains(event.target))window.togglePlatformAdminMenu(false)});
   }
-  function itemsForSurface(){return window.adminSurface==='platform'?platformItems():companyAdmin(adminIdentity)?[['overview','Resumen'],['users','Usuarios'],['company-profile','Datos y licencia'],['commercial','Capacidad y servicios']]:[]}
+  function itemsForSurface(){return window.adminSurface==='platform'?platformItems():companyAdmin(adminIdentity)?[['overview','Resumen'],['users','Usuarios'],['company-profile','Datos y licencia'],['commercial','Capacidad y servicios'],['company-branding','Personalización']]:[]}
   const companyLabel=()=>companyProfile?.company.legal_name||'Empresa autorizada';
   function paintCompanyHeading(){
     if(activeAdmin?.surface!=='company')return;
@@ -116,7 +117,7 @@
     const available=`<nav class="admin-tabs" aria-label="${platform?'Secciones de plataforma':'Administración de mi empresa'}">${items.map(([key,label])=>`<button class="${tab===key?'active':''}" ${tab===key?'aria-current="page"':''} onclick="adminTab('${key}')">${label}</button>`).join('')}</nav>`;
     A.innerHTML=`<div class="admin-shell"><div class="admin-head"><div><small>${platform?'ADMINISTRACIÓN DE PLATAFORMA':'ADMINISTRACIÓN DE EMPRESA'}</small><h2 ${platform?'':'id="companyAdminHeading"'}>${platform?'Administración de Plataforma':esc(companyLabel())}</h2><p>${platform?'Alcance global: estas opciones administran la plataforma, no solo la empresa seleccionada.':'Administración de la empresa autorizada. Los datos contractuales se consultan en Datos y licencia.'}</p></div></div>${available}<div id="admin-panel"><div class="admin-loading" role="status">Cargando...</div></div></div>`;
     title.focus?.({preventScroll:true});
-    try{const views={overview,organization,users,roles,owners,settings,audit,'commercial-plans':()=>window.CommercialUI.plans(document.getElementById('admin-panel'),()=>revision===adminRevision),'commercial':()=>window.CommercialUI.company(document.getElementById('admin-panel'),{isCurrent:()=>revision===adminRevision}),'company-profile':companyProfileView};await views[tab]()}catch(error){if(revision===adminRevision){const panel=document.getElementById('admin-panel');if(panel)panel.innerHTML=`<div class="admin-error" role="alert">${esc(error.message)}<br><button class="secondary" onclick="adminTab('${tab}')">Reintentar</button></div>`}}
+    try{const views={overview,organization,users,roles,owners,settings,audit,'commercial-plans':()=>window.CommercialUI.plans(document.getElementById('admin-panel'),()=>revision===adminRevision),'commercial':()=>window.CommercialUI.company(document.getElementById('admin-panel'),{isCurrent:()=>revision===adminRevision}),'company-branding':()=>window.CompanyBranding.editor(document.getElementById('admin-panel'),{isCurrent:()=>revision===adminRevision}),'company-profile':companyProfileView};await views[tab]()}catch(error){if(revision===adminRevision){const panel=document.getElementById('admin-panel');if(panel)panel.innerHTML=`<div class="admin-error" role="alert">${esc(error.message)}<br><button class="secondary" onclick="adminTab('${tab}')">Reintentar</button></div>`}}
   };
   window.renderAdminNavigation(window.Auth?.user);
   async function overview(){

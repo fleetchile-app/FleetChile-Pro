@@ -34,6 +34,7 @@
  function authenticatedScreen(content){
   root.innerHTML=`<section class="driver-shell">${accountHeader()}${Auth.user?.role_code==='driver'&&Auth.user.driver_id&&!Auth.user.must_change_password?gpsPanel():''}${content}</section>`;
   renderGps();
+  window.CompanyBranding?.load();
   window.DriverMobile?.mountOutbox();
   root.querySelector('[data-driver-logout]').onclick=logoutDriver;
   root.querySelector('[data-driver-password]').onclick=()=>{if(leaveForm())changePassword()};

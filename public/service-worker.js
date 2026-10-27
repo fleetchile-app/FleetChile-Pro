@@ -1,5 +1,5 @@
-const CACHE='fleetchile-driver-shell-v2';
-const SHELL=['/driver','/driver.html','/driver.css','/driver.js','/driver-vault.js','/driver-mobile.js','/auth.js','/manifest.webmanifest','/icon-192.svg','/icon-512.svg'];
+const CACHE='fleetchile-driver-shell-v3';
+const SHELL=['/driver','/driver.html','/driver.css','/driver.js','/driver-vault.js','/driver-mobile.js','/auth.js','/company-branding.js','/company-branding.css','/manifest.webmanifest','/icon-192.svg','/icon-512.svg'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL))));
 self.addEventListener('activate',event=>event.waitUntil((async()=>{
  for(const name of await caches.keys())if(name.startsWith('fleetchile-driver-shell-')&&name!==CACHE)await caches.delete(name);

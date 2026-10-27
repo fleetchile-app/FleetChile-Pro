@@ -4,7 +4,7 @@ const assert=require('node:assert/strict');
 const {generateDriverPdf,wrapLine}=require('../driver-pdf');
 test('genera PDF binario multipágina legible sin dependencia externa',()=>{
  const pdf=generateDriverPdf({driver:{name:'Ana Ñeira',username:'ana',rut:'12.345.678-5'},trips:Array.from({length:70},(_,i)=>({trip_number:`V-${i}`,status:'Completado',origin:'A',destination:'B'}))});
- assert.equal(Buffer.isBuffer(pdf),true);assert.match(pdf.toString('latin1',0,80),/^%PDF-1\.4/);assert.match(pdf.toString('latin1'),/\/Count [2-9]/);assert.match(pdf.toString('latin1'),/Ana Neira/);
+ assert.equal(Buffer.isBuffer(pdf),true);assert.match(pdf.toString('latin1',0,80),/^%PDF-1\.4/);assert.match(pdf.toString('latin1'),/\/Count [2-9]/);assert.match(pdf.toString('latin1'),/Ana Ñeira/);
 });
 test('envuelve notas largas y conserva todo el historial con encabezado y paginación',()=>{
  const note='inicio '+('X'.repeat(6000))+' termino';
