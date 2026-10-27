@@ -65,7 +65,7 @@ async function receive(db,req,order,truck,b,now){
  fleetMutation(req);
  if(order.operation_stage!=='scheduled')throw D.fail('Sólo se recibe una orden programada',409);
  const at=D.instant(b.received_at,'Fecha y hora de ingreso',now);
- const execution=(await db.query(`select id,trip_number from trips where company_id=$1 and truck_id=$2
+ const execution=(await db.query(`select id,trip_number from trips where company_id=$1 and (truck_id=$2 or trailer_id=$2)
   and status in ('En carga','En tránsito','Detenido','Llegó a destino','Descargando') limit 1`,[order.company_id,truck.id])).rows[0];
  if(execution)throw D.fail('El vehículo tiene un viaje en ejecución. Resuelve su situación antes de ingresarlo al taller.',409);
  if((await db.query("select id from maintenance where company_id=$1 and truck_id=$2 and id<>$3 and status='En proceso' limit 1",[order.company_id,truck.id,order.id])).rows.length)throw D.fail('El vehículo ya tiene una mantención en proceso',409);

@@ -36,7 +36,7 @@ function generateDriverPdf({driver={},trips=[],events=[],licenses=[]}={}){
   ...(licenses.length?licenses.map(x=>`${x.classes||'—'} | emitida ${pdfDate(x.issued_date)} | impresa ${pdfDate(x.printed_expiry)} | efectiva hasta ${pdfDate(x.effective_expiry)} | ${x.current===false?'historica':'vigente'}`):['Sin licencias registradas']),
   '',
   'Historial operacional',
-  ...(trips.length?trips.map(x=>`${x.trip_number||'Viaje'} | ${x.status||'—'} | ${x.origin||'—'} -> ${x.destination||'—'}`):['Sin viajes registrados']),
+  ...(trips.length?trips.map(x=>`${x.trip_number||'Viaje'} | ${x.status||'—'} | ${x.origin||'—'} -> ${x.destination||'—'}${x.currently_assigned===false?' | Asignacion anterior':x.currently_assigned===true?' | Asignacion actual':''}`):['Sin viajes registrados']),
   '',
   'Eventos de perfil',
   ...(events.length?events.map(x=>`${pdfDate(x.event_date)} | ${x.event_type||'—'} | ${pdfDate(x.ends_on)} | ${x.amount_clp??'—'} | ${x.notes||''}`):['Sin eventos registrados'])

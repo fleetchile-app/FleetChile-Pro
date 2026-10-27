@@ -1,6 +1,7 @@
 const {requirePermission,resolveActorContext,isPlatformOwner}=require('./auth');
 const {writeAudit}=require('./audit');
 const {registerMaintenanceWorkOrderRoutes}=require('./maintenance-workorders');
+const {registerEquipmentRoutes}=require('./equipment-api');
 const body=req=>req.body&&typeof req.body==='object'?req.body:{};
 const clean=v=>typeof v==='string'?v.trim():v;
 const actorContext=req=>resolveActorContext(req);
@@ -62,6 +63,7 @@ const alertKey=item=>`${item.source_type}:${item.source_id}:${item.condition_cod
 function maintenanceAlertsEnabled(value){return value===undefined||value===null||value===true||value==='true'}
 async function registerFleetRoutes(app,pool){
  registerMaintenanceWorkOrderRoutes(app,pool);
+ registerEquipmentRoutes(app,pool);
  app.get('/api/fleet/positions',requirePermission('gps.read'),async(req,res)=>{try{const s=scope(req,'t');const vals=[...s.values];const where=[s.sql];if(req.query.truck_id){vals.push(Number(req.query.truck_id));where.push(`te.truck_id=$${vals.length}`)}if(req.query.from){const d=parseDate(req.query.from);if(!d)return res.status(400).json({error:'Fecha inicial no válida'});vals.push(d);where.push(`te.recorded_at >= $${vals.length}`)}if(req.query.to){const d=parseDate(req.query.to);if(!d)return res.status(400).json({error:'Fecha final no válida'});vals.push(d);where.push(`te.recorded_at <= $${vals.length}`)}const limit=Math.min(Math.max(Number(req.query.limit)||500,1),5000);vals.push(limit);const r=await pool.query(`select te.id,te.truck_id,te.trip_id,te.lat,te.lng,te.speed_kmh,te.km,te.recorded_at,t.patente,t.status,t.location from telemetry te join trucks t on t.id=te.truck_id where ${where.join(' and ')} order by te.recorded_at desc,te.id desc limit $${vals.length}`,vals);res.json(r.rows)}catch(e){res.status(500).json({error:'No se pudieron consultar las posiciones'})}});
  app.get('/api/fleet/trucks/:id/positions',requirePermission('gps.read'),async(req,res)=>{try{const s=scope(req,'t',2);const vals=[Number(req.params.id),...s.values];const where=[`te.truck_id=$1`,s.sql];if(req.query.from){const d=parseDate(req.query.from);if(!d)return res.status(400).json({error:'Fecha inicial no válida'});vals.push(d);where.push(`te.recorded_at >= $${vals.length}`)}if(req.query.to){const d=parseDate(req.query.to);if(!d)return res.status(400).json({error:'Fecha final no válida'});vals.push(d);where.push(`te.recorded_at <= $${vals.length}`)}const r=await pool.query(`select te.id,te.truck_id,te.trip_id,te.lat,te.lng,te.speed_kmh,te.km,te.recorded_at from telemetry te join trucks t on t.id=te.truck_id where ${where.join(' and ')} order by te.recorded_at desc,te.id desc limit 1000`,vals);if(!r.rowCount&&isAdmin(req)){const exists=await pool.query('select id from trucks where id=$1',[req.params.id]);if(!exists.rowCount)return res.sendStatus(404)}res.json(r.rows)}catch(e){res.status(500).json({error:'No se pudo consultar el historial GPS'})}});
  app.get('/api/fleet/trucks/:id/position',requirePermission('gps.read'),async(req,res)=>{
@@ -71,7 +73,7 @@ async function registerFleetRoutes(app,pool){
    // Same permission as the operational trip detail; GPS-only access stays unchanged.
    const tripDetails=isPlatformOwner(req.user)||(req.user.role_code==='admin'&&!req.user.membership_id&&!req.user.platform_membership_id)||(req.user.permissions||[]).includes('trips.manage');
    const fields=tripDetails?',p.id associated_trip_id,p.company_id trip_company_id,p.trip_number,p.status trip_status,d.name driver_name,c.name client_name':'';
-   const joins=tripDetails?' left join trips p on p.id=te.trip_id and p.company_id=t.company_id left join drivers d on d.id=p.driver_id and d.company_id=p.company_id left join clients c on c.id=p.client_id and c.company_id=p.company_id':'';
+   const joins=tripDetails?' left join trips p on p.id=te.trip_id and p.company_id=t.company_id and p.truck_id=t.id left join drivers d on d.id=p.driver_id and d.company_id=p.company_id left join clients c on c.id=p.client_id and c.company_id=p.company_id':'';
    const r=await pool.query(`select te.id,te.truck_id,te.trip_id,te.lat,te.lng,te.speed_kmh,te.km,te.recorded_at${fields} from telemetry te join trucks t on t.id=te.truck_id${joins} where te.truck_id=$1 and ${s.sql} order by te.recorded_at desc,te.id desc limit 1`,[truckId,...s.values]);
    if(!r.rowCount)return res.sendStatus(404);res.json(r.rows[0]);
   }catch(e){res.status(500).json({error:'No se pudo consultar la posición del camión'})}

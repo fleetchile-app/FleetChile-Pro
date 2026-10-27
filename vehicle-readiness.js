@@ -1,5 +1,6 @@
 'use strict';
 const {companyDate}=require('./personnel-domain');
+const {role}=require('./equipment-domain');
 
 const ROAD_CODES=['circulation','soap','inspection'];
 function operationalReasons(row){
@@ -15,11 +16,11 @@ function day(value,zone='America/Santiago'){
   return companyDate(d,zone);
 }
 
-async function assertVehicleRoadReady(db,{companyId,truckId,now,lock=false}={}){
+async function assertVehicleRoadReady(db,{companyId,truckId,now,lock=false,primary=false}={}){
   if(!companyId||!truckId)throw Object.assign(new Error('Empresa y vehículo son obligatorios'),{status:400,code:'INVALID_CONTEXT'});
   const policy=(await db.query('select time_zone from company_personnel_policies where company_id=$1',[companyId])).rows[0];
   if(lock)await db.query('select id from trucks where id=$1 and company_id=$2 for no key update',[truckId,companyId]);
-  const rows=(await db.query(`select t.id,t.company_id,t.status,
+  const rows=(await db.query(`select t.id,t.company_id,t.status,t.tipo,
     coalesce(jsonb_object_agg(vd.road_requirement_code,jsonb_build_object('expires_at',vd.expires_at,'status',vd.status)) filter (where vd.road_requirement_code is not null),'{}'::jsonb) document_expiries
     from trucks t left join vehicle_documents vd on vd.truck_id=t.id and vd.road_requirement_code in ('circulation','soap','inspection') and vd.road_requirement_superseded=false
     where t.id=$1 and t.company_id=$2 group by t.id`,[truckId,companyId])).rows;
@@ -31,6 +32,7 @@ async function assertVehicleRoadReady(db,{companyId,truckId,now,lock=false}={}){
   const expired=ROAD_CODES.filter(code=>expiries[code]?.expires_at&&String(expiries[code].expires_at).slice(0,10)<today);
   const invalidStatus=ROAD_CODES.filter(code=>!missing.includes(code)&&!['Vigente','Por vencer'].includes(expiries[code]?.status));
   const reasons=[...missing.map(c=>`${labels[c]}: fecha faltante`),...expired.map(c=>`${labels[c]}: fecha vencida`),...invalidStatus.map(c=>`${labels[c]}: estado documental no válido`)];
+  if(primary&&role(row.tipo)==='trailer')reasons.push('Un remolque no puede ser el vehículo principal del viaje');
   const maintenance=(await db.query("select id from maintenance where company_id=$1 and truck_id=$2 and status='En proceso' limit 1",[companyId,truckId])).rows[0];
   const rejected=(await db.query(`select a.id from alerts a join vehicle_checklists vc on vc.id=a.source_id
     join trips t on t.id=vc.trip_id and t.company_id=a.company_id

@@ -14,9 +14,9 @@ test('conflicto informa solo IDs de viajes de la empresa y recursos afectados',a
  let call;const db={async query(sql,values){call={sql,values};return {rows:[{id:8,trip_number:'V-8',truck_id:4,driver_id:9}]};}};
  await assert.rejects(assertTripAvailability(db,{companyId:10,truckId:4,driverId:7,tripId:3}),e=>{
   assert.equal(e.code,'TRIP_RESOURCE_CONFLICT');assert.equal(e.status,409);
-  assert.deepEqual(e.details.conflicts,[{trip_id:8,trip_number:'V-8',truck:true,driver:false}]);return true;
+  assert.deepEqual(e.details.conflicts,[{trip_id:8,trip_number:'V-8',truck:true,driver:false,trailer:false}]);return true;
  });
- assert.deepEqual(call.values,[10,4,7,3,null,null,false]);
+ assert.deepEqual(call.values,[10,4,7,3,null,null,false,null,null]);
  assert.match(call.sql,/t.company_id=\$1/);assert.match(call.sql,/t.id<>\$4/);
  assert.match(call.sql,/not in \('Completado','Cancelado'\)/);assert.doesNotMatch(call.sql,/for update/i);
 });
