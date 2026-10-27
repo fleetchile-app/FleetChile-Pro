@@ -10,6 +10,7 @@ MIGRATION_FILES.push('033_maintenance_workorders.sql');
 MIGRATION_FILES.push('034_fleet_compositions_assignments.sql');
 MIGRATION_FILES.push('035_trip_itineraries.sql');
 MIGRATION_FILES.push('036_economic_integration.sql');
+MIGRATION_FILES.push('037_driver_mobile_workflow.sql');
 
 function timeoutMs(value,fallback){
   const parsed=Number(value);

@@ -19,7 +19,8 @@ test('PL16–PL24 PostgreSQL aislado: itinerarios, capacidad, tiempos y excepcio
   for(const m of MIGRATION_FILES)await pg.exec(source('migrations/'+m));
   const role=await one("select id from roles where code='company_admin'"),driverRole=await one("select id from roles where code='driver'");
   const app={},routes=[];for(const m of ['get','post','patch','put','delete'])app[m]=(p,...h)=>routes.push({m,p,h});
-  registerCoreRoutes(app,pool);await registerFleetRoutes(app,pool);await registerOperationsRoutes(app,pool);
+  const evidence=new Map(),storage={put:async item=>evidence.set(item.key,item),head:async key=>{if(!evidence.has(key))throw Object.assign(Error('missing'),{notFound:true});return {};},delete:async key=>evidence.delete(key)};
+  registerCoreRoutes(app,pool);await registerFleetRoutes(app,pool);await registerOperationsRoutes(app,pool,{storage});
   let routingFails=false;
   require('../itinerary-api').registerItineraryRoutes(app,pool,{async route(a,b){if(routingFails)throw Error('fixture proveedor caído');return {distance_meters:1000,duration_seconds:600,provider:'fixture-router',calculated_at:'2026-10-26T00:00:00Z',geometry:{type:'LineString',coordinates:[[a.lng,a.lat],[b.lng,b.lat]]}};}});
   async function run(f,method,p,body={},params={},filters={}){
@@ -157,6 +158,78 @@ test('PL16–PL24 PostgreSQL aislado: itinerarios, capacidad, tiempos y excepcio
    const f=await scenario(),other=await scenario();assert.equal((await run(other,'get',IT,{}, {id:f.trip.id})).statusCode,404);
    const df={...f,actor:{id:f.d.u.id,company_id:f.cid,driver_id:f.d.d.id,role_code:'driver'}};
    assert.equal((await run(df,'get',IT,{}, {id:f.trip.id})).statusCode,403);
+  });
+  const MOBILE='/api/driver/trips/:id/workflow';
+  const driverActor=f=>({...f,actor:{id:f.d.u.id,company_id:f.cid,driver_id:f.d.d.id,role_code:'driver',scope:'company',actor_type:'company',name:'Conductor fixture'}});
+  async function mobileScenario(){const f=await scenario();assert.equal((await save(f)).statusCode,200);return {f,df:driverActor(f),ctx:{version:1,resource_version:f.trip.resource_version}};}
+  await t.test('móvil: aceptación idempotente, aislamiento, versiones y autoría trazable',async()=>{
+   const {f,df,ctx}=await mobileScenario(),other=await mobileScenario();
+   assert.equal((await run(other.df,'get',MOBILE,{}, {id:f.trip.id})).statusCode,404);
+   assert.equal((await run(f,'get',MOBILE,{}, {id:f.trip.id})).statusCode,403);
+   const b={...ctx,client_key:'mobile-accept-1',reported_at:new Date().toISOString()};
+   let r=await run(df,'post',MOBILE+'/accept',b,{id:f.trip.id});assert.equal(r.statusCode,201,JSON.stringify(r.payload));
+   r=await run(df,'post',MOBILE+'/accept',b,{id:f.trip.id});assert.equal(r.statusCode,200);
+   assert.equal((await run(df,'post',MOBILE+'/accept',{...b,reported_at:'2000-01-01T00:00:00Z'},{id:f.trip.id})).statusCode,409);
+   assert.equal((await run(df,'post',MOBILE+'/accept',{...b,client_key:'stale',resource_version:999},{id:f.trip.id})).statusCode,409);
+   assert.equal((await one('select count(*)::int n from driver_mobile_actions where trip_id=$1',[f.trip.id])).n,1);
+   const receipt=await one('select * from driver_mobile_actions where trip_id=$1',[f.trip.id]);assert.equal(String(receipt.actor_user_id),String(f.d.u.id));
+   await assert.rejects(query("update driver_mobile_actions set kind='checklist' where id=$1",[receipt.id]),/inmutables/);
+   const state=await run(df,'get',MOBILE,{}, {id:f.trip.id});assert.ok(state.payload.accepted_at);assert.equal(state.payload.stops.length,4);assert.equal(state.payload.loads[0].client_name,'Cliente fixture');assert.equal(state.payload.next_stop.key,'s0');
+   assert.equal(JSON.stringify(state.payload).includes('storage_key'),false);assert.equal(JSON.stringify(state.payload).includes('revenue'),false);
+  });
+  await t.test('móvil: checklist completo, rechazo, alerta única y rollback de auditoría',async()=>{
+   const {f,df,ctx}=await mobileScenario(),items=require('../driver-workflow-api').CHECKS.map(id=>({id,result:'ok'}));
+   let r=await run(df,'post',MOBILE+'/checklist',{...ctx,client_key:'invalid',items:items.slice(1)},{id:f.trip.id});assert.equal(r.statusCode,400);
+   const b={...ctx,client_key:'valid-check',items:items.map((i,n)=>({...i,result:n?'ok':'fail'})),observations:'Freno requiere revisión'};
+   await pg.exec("create function fail_mobile_audit() returns trigger as $$ begin if NEW.entity='driver_mobile_action' then raise exception 'fixture audit failure'; end if; return NEW; end; $$ language plpgsql; create trigger mobile_fail_audit before insert on audit_logs for each row execute function fail_mobile_audit();");
+   try{r=await run(df,'post',MOBILE+'/checklist',b,{id:f.trip.id});assert.equal(r.statusCode,500);}finally{await pg.exec('drop trigger mobile_fail_audit on audit_logs; drop function fail_mobile_audit();');}
+   assert.equal((await one('select count(*)::int n from vehicle_checklists where trip_id=$1',[f.trip.id])).n,0);
+   r=await run(df,'post',MOBILE+'/checklist',b,{id:f.trip.id});assert.equal(r.statusCode,201,JSON.stringify(r.payload));assert.equal(r.payload.status,'Rechazado');
+   assert.equal((await run(df,'post',MOBILE+'/checklist',b,{id:f.trip.id})).statusCode,200);
+   assert.equal((await run(df,'post',MOBILE+'/checklist',{...b,client_key:'another'},{id:f.trip.id})).statusCode,409);
+   assert.equal((await one("select count(*)::int n from alerts where company_id=$1 and condition_code='checklist_rejected'",[f.cid])).n,1);
+  });
+  await t.test('móvil: recogidas obligatorias, paradas ordenadas, excepciones y POD por entrega',async()=>{
+   const {f,df,ctx}=await mobileScenario();let key=0;
+   const send=(kind,stop_key,more={})=>run(df,'post',MOBILE+'/events',{...ctx,event_key:'mobile-event-'+ ++key,kind,stop_key,...more},{id:f.trip.id});
+   assert.equal((await send('pickup','s0',{load_id:Number(f.loads[0].id)})).statusCode,409);
+   const arrival={...ctx,event_key:'mobile-arrival',kind:'arrive',stop_key:'s0',reported_at:'2026-01-01T00:00:00Z'};
+   assert.equal((await run(df,'post',MOBILE+'/events',arrival,{id:f.trip.id})).statusCode,201);
+   assert.equal((await run(df,'post',MOBILE+'/events',arrival,{id:f.trip.id})).statusCode,200);
+   assert.equal((await send('depart','s0')).statusCode,409);
+   for(const load of f.loads)assert.equal((await send('pickup','s0',{load_id:Number(load.id)})).statusCode,201);
+   await query("update vehicle_documents set status='Vencido' where truck_id=$1 and document_type='SOAP'",[f.main.id]);
+   let blocked=await send('depart','s0');assert.equal(blocked.statusCode,409,JSON.stringify(blocked.payload));assert.equal(blocked.payload.code,'VEHICLE_NOT_ROAD_READY');
+   assert.equal((await one("select count(*)::int n from trip_itinerary_events where trip_id=$1 and kind='depart'",[f.trip.id])).n,0);
+   await query("update vehicle_documents set status='Vigente' where truck_id=$1 and document_type='SOAP'",[f.main.id]);
+   assert.equal((await send('depart','s0')).statusCode,201);
+   const signature='iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAGklEQVQ4jWP4TyFgGDXg/2gY/B8Ng//DIgwAXXj8LuMlDaEAAAAASUVORK5CYII=';
+   const pod={...ctx,load_id:Number(f.loads[0].id),client_submission_id:'mobile-pod-1',recipient_name:'Receptor fixture',signature};
+   let r=await run(df,'post','/api/driver/trips/:id/deliveries',pod,{id:f.trip.id});assert.equal(r.statusCode,409);
+   assert.equal((await send('arrive','s1')).statusCode,201);
+   assert.equal((await send('failed','s1',{load_id:Number(f.loads[0].id),reason:'Receptor ausente'})).statusCode,201);
+   assert.equal((await send('partial','s1',{load_id:Number(f.loads[0].id),reason:'Solo parte',delivered_kg:1000})).statusCode,201);
+   assert.equal((await send('reschedule','s1',{load_id:Number(f.loads[0].id),reason:'Solicito otra hora'})).statusCode,201);
+   assert.equal((await send('depart','s1')).statusCode,409);
+   const state=await run(df,'get',MOBILE,{}, {id:f.trip.id});assert.equal(state.payload.loads.find(l=>String(l.id)===String(f.loads[0].id)).remaining_kg,3000);
+   r=await run(df,'post','/api/driver/trips/:id/deliveries',pod,{id:f.trip.id});assert.equal(r.statusCode,201,JSON.stringify(r.payload));
+   assert.equal((await run(df,'post','/api/driver/trips/:id/deliveries',pod,{id:f.trip.id})).statusCode,200);
+   assert.equal((await one('select count(*)::int n from trip_delivery_proofs where trip_id=$1',[f.trip.id])).n,1);
+   assert.equal((await one("select count(*)::int n from trip_loads where trip_id=$1 and status='Entregada'",[f.trip.id])).n,1);
+   assert.equal((await send('depart','s1')).statusCode,201);
+   const row=await one("select reported_at,occurred_at from trip_itinerary_events where trip_id=$1 and event_key='mobile-arrival'",[f.trip.id]);assert.ok(new Date(row.occurred_at)>new Date(row.reported_at));
+  });
+  await t.test('móvil: reasignación, suspensión y viaje cerrado impiden nuevas acciones',async()=>{
+   const {f,df,ctx}=await mobileScenario(),b={...ctx,client_key:'old-assignment'};
+   const replacement=await driver(f.cid),assigned=await assign({...f,d:replacement},await one('select * from trips where id=$1',[f.trip.id]),null,{reason:'Relevo fixture',itinerary_review:{acknowledged:true,notes:'Revisión operacional del relevo'}});assert.equal(assigned.statusCode,200,JSON.stringify(assigned.payload));
+   assert.equal((await run(df,'post',MOBILE+'/accept',b,{id:f.trip.id})).statusCode,404);
+   const next={...f,d:replacement},nf=driverActor(next),nextCtx={version:assigned.payload.trip.itinerary_version,resource_version:assigned.payload.trip.resource_version};
+   assert.equal((await run(nf,'post',MOBILE+'/accept',{...nextCtx,client_key:'current'},{id:f.trip.id})).statusCode,201);
+   await query('update users set active=false where id=$1',[replacement.u.id]);
+   assert.equal((await run(nf,'post',MOBILE+'/accept',{...nextCtx,client_key:'blocked'},{id:f.trip.id})).statusCode,403);
+   assert.equal((await one("select count(*)::int n from driver_mobile_actions where trip_id=$1 and client_key='blocked'",[f.trip.id])).n,0);
+   await query('update users set active=true where id=$1',[replacement.u.id]);await query("update trips set status='Cancelado' where id=$1",[f.trip.id]);
+   assert.equal((await run(nf,'post',MOBILE+'/accept',{...nextCtx,client_key:'closed'},{id:f.trip.id})).statusCode,409);
   });
  }finally{await pg.close();}
 });

@@ -61,6 +61,49 @@ async function transferredLoad(db,req,trip,loadId,reason){
  plan.capacity=D.capacityPlan(plan.stops,plan.loads,state.loads,plan.vehicle.capacity_t,state.events,historicCapacities(previous.plan,plan.stops,state.events));
  await appendPlan(db,req,trip,plan,'Transferencia de carga #'+loadId+': '+reason);
 }
+async function recordItineraryEvent(db,req,locked,b,{pickups=false}={}){
+ const kind=b.kind,eventKey=D.key(b.event_key),version=E.id(b.version,'Versión');
+ if(!['arrive','depart','pickup','failed','partial','reschedule','delay'].includes(kind))throw D.fail('Evento no válido');
+ const duplicate=(await db.query('select * from trip_itinerary_events where company_id=$1 and trip_id=$2 and event_key=$3',[locked.company_id,locked.id,eventKey])).rows[0];
+ if(duplicate){
+  if(duplicate.kind!==kind||String(duplicate.stop_key||'')!==String(b.stop_key||'')||String(duplicate.load_id||'')!==String(b.load_id||'')||Number(duplicate.itinerary_version)!==version||String(duplicate.reason||'')!==String(b.reason||'').trim()||Number(duplicate.minutes||0)!==Number(b.minutes||0)||Number(duplicate.delivered_kg||0)!==Number(b.delivered_kg||0))throw D.fail('El identificador de reintento corresponde a otra acción',409);
+  return {row:duplicate,created:false};
+ }
+ if(terminal(locked.status)||locked.itinerary_version!==version)throw D.fail('El viaje cambió o está cerrado; recarga el itinerario',409,'ITINERARY_STALE');
+ const revision=await currentPlan(db,locked),state=await loadState(db,locked);
+ if(!revision)throw D.fail('No se encontró el itinerario',409);
+ const plan=revision.plan;assertLoads(plan,state.loads);
+ const stop=b.stop_key?plan.stops.find(s=>s.key===D.key(b.stop_key)):null,loadId=b.load_id?E.id(b.load_id,'Carga'):null;
+ if(loadId&&!['pickup','failed','partial','reschedule'].includes(kind))throw D.fail('Esta acción no admite una carga');
+ if(b.stop_key&&!stop)throw D.fail('La parada no pertenece al itinerario');
+ if(kind!=='delay'&&!stop)throw D.fail('Selecciona una parada del itinerario');
+ const next=D.progress(plan,state.events).find(s=>!s.actual_departure);
+ if(['arrive','depart','pickup','failed','partial'].includes(kind)&&(!next||next.key!==stop.key))throw D.fail('Registra las paradas en su orden de ejecución',409);
+ if(kind==='arrive'&&next.actual_arrival||['depart','pickup','failed','partial'].includes(kind)&&!next.actual_arrival)throw D.fail('Primero registra la llegada; no repitas una llegada ya registrada',409);
+ if(kind==='depart'){
+  if(plan.loads.some(m=>m.delivery===stop.key&&state.loads.some(l=>Number(l.id)===m.load_id&&l.status!=='Entregada'&&!l.delivered_at)))throw D.fail('Hay entregas pendientes, fallidas o parciales: entrega el saldo o reprograma su destino antes de salir',409);
+  if(pickups&&plan.loads.some(m=>m.pickup===stop.key&&!state.events.some(e=>e.kind==='pickup'&&String(e.load_id)===String(m.load_id))))throw D.fail('Confirma las recogidas de esta parada antes de salir',409);
+ }
+ let delivered=null,delay=null,reason=null;
+ if(['failed','partial','reschedule','delay'].includes(kind))reason=E.text(b.reason,'Motivo',2000);
+ if(kind==='delay'){delay=D.minutes(b.minutes,'Demora');if(!delay)throw D.fail('La demora debe ser mayor que cero');}
+ if(['pickup','failed','partial','reschedule'].includes(kind)){
+  const l=state.loads.find(l=>Number(l.id)===loadId),mapped=plan.loads.find(l=>l.load_id===loadId);
+  if(!l||!mapped||(kind==='pickup'?mapped.pickup:mapped.delivery)!==stop.key)throw D.fail('La carga no corresponde a esta parada',409);
+  if(l.status==='Entregada'||l.delivered_at)throw D.fail('La carga ya tiene entrega registrada',409);
+  if(kind==='pickup'&&state.events.some(e=>e.kind==='pickup'&&String(e.load_id)===String(loadId)))throw D.fail('La recogida ya fue confirmada',409);
+  if(kind==='partial'){
+   delivered=Number(b.delivered_kg);const previous=state.events.filter(e=>String(e.load_id)===String(loadId)&&e.kind==='partial').reduce((n,e)=>n+Number(e.delivered_kg),0);
+   if(!Number.isFinite(delivered)||delivered<=0||!l.weight_kg||previous+delivered>=Number(l.weight_kg))throw D.fail('Indica un peso parcial positivo menor al saldo pendiente');
+  }
+ }
+ const reported=b.reported_at?new Date(b.reported_at):null;
+ if(reported&&(!Number.isFinite(reported.getTime())||reported.getTime()>Date.now()+300000))throw D.fail('Fecha informada no válida');
+ const row=(await db.query('insert into trip_itinerary_events(company_id,trip_id,itinerary_version,event_key,stop_key,load_id,kind,minutes,delivered_kg,reason,actor_user_id,actor_name,reported_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning *',[locked.company_id,locked.id,version,eventKey,stop?.key||null,loadId,kind,delay,delivered,reason,req.user.id,req.user.name||'Usuario autenticado',reported])).rows[0];
+ await db.query('insert into trip_events(trip_id,event_type,notes,created_by,details) values($1,$2,$3,$4,$5)',[locked.id,'Itinerario: '+kind,reason||'Registro de '+kind,req.user.id,{stop_key:stop?.key||null,load_id:loadId,itinerary_event_id:row.id}]);
+ await writeAudit(db,req,{companyId:locked.company_id,action:'create',entity:'trip_itinerary_event',entityId:row.id,afterData:row});
+ return {row,created:true};
+}
 function registerItineraryRoutes(app,pool,router){
  const route=(method,path,permission,work)=>app[method](path,requirePermission(permission),async(req,res)=>{try{const cid=company(req),trip=(await pool.query('select * from trips where id=$1 and company_id=$2',[E.id(req.params.id,'Viaje'),cid])).rows[0];if(!trip)return res.sendStatus(404);await work(req,res,trip);}catch(e){res.status(e.status||500).json({error:e.status?e.message:'No se pudo procesar el itinerario',code:e.code||'ITINERARY_ERROR'});}});
  route('get',BASE+'/options','trips.manage',async(req,res,trip)=>{
@@ -121,38 +164,12 @@ function registerItineraryRoutes(app,pool,router){
   }catch(e){await db.query('ROLLBACK');throw e;}finally{db.release();}
  });
  route('post',BASE+'/events','trips.manage',async(req,res,trip)=>{
-  const b=req.body||{},kind=b.kind,eventKey=D.key(b.event_key),version=E.id(b.version,'Versión');
-  if(!['arrive','depart','failed','partial','reschedule','delay'].includes(kind))throw D.fail('Evento no válido');
   const db=await pool.connect();try{
    await db.query('BEGIN');const locked=(await db.query('select * from trips where company_id=$1 and id=$2 for update',[trip.company_id,trip.id])).rows[0];
-   const duplicate=(await db.query('select * from trip_itinerary_events where company_id=$1 and trip_id=$2 and event_key=$3',[trip.company_id,trip.id,eventKey])).rows[0];
-   if(duplicate){if(duplicate.kind!==kind||String(duplicate.stop_key||'')!==String(b.stop_key||'')||String(duplicate.load_id||'')!==String(b.load_id||''))throw D.fail('El identificador de reintento corresponde a otra acción',409);await db.query('COMMIT');return res.json(duplicate);}
-   if(!locked||terminal(locked.status)||locked.itinerary_version!==version)throw D.fail('El viaje cambió o está cerrado; recarga el itinerario',409,'ITINERARY_STALE');
-   const revision=await currentPlan(db,locked),state=await loadState(db,locked),plan=revision.plan;
-   const stop=b.stop_key?plan.stops.find(s=>s.key===D.key(b.stop_key)):null,loadId=b.load_id?E.id(b.load_id,'Carga'):null;
-   if(loadId&&!['failed','partial','reschedule'].includes(kind))throw D.fail('Esta acción no admite una carga');
-   if(b.stop_key&&!stop)throw D.fail('La parada no pertenece al itinerario');
-   if(kind!=='delay'&&!stop)throw D.fail('Selecciona una parada del itinerario');
-   if(['arrive','depart'].includes(kind)){
-    const next=D.progress(plan,state.events).find(s=>!s.actual_departure);if(!next||next.key!==stop.key)throw D.fail('Registra las paradas en su orden de ejecución',409);
-    if(kind==='arrive'&&next.actual_arrival||kind==='depart'&&!next.actual_arrival)throw D.fail('Primero registra la llegada; no repitas una llegada ya registrada',409);
-    if(kind==='depart'&&plan.loads.some(m=>m.delivery===stop.key&&state.loads.some(l=>Number(l.id)===m.load_id&&l.status!=='Entregada'&&!l.delivered_at)))throw D.fail('Hay entregas pendientes, fallidas o parciales: entrega el saldo o reprograma su destino antes de salir',409);
-   }
-   let delivered=null,delay=null,reason=null;
-   if(['failed','partial','reschedule','delay'].includes(kind))reason=E.text(b.reason,'Motivo',2000);
-   if(kind==='delay'){delay=D.minutes(b.minutes,'Demora');if(!delay)throw D.fail('La demora debe ser mayor que cero');}
-   if(['failed','partial','reschedule'].includes(kind)){
-    const l=state.loads.find(l=>Number(l.id)===loadId),mapped=plan.loads.find(l=>l.load_id===loadId);
-    if(!l||!mapped||mapped.delivery!==stop.key)throw D.fail('La carga no corresponde a esta entrega',409);
-    if(['failed','partial'].includes(kind)&&!state.events.some(e=>e.stop_key===stop.key&&e.kind==='arrive'))throw D.fail('Registra la llegada antes de una entrega fallida o parcial',409);
-    if(l.status==='Entregada'||l.delivered_at)throw D.fail('La carga ya tiene entrega registrada; no se reescribe desde una excepción',409);
-    if(kind==='partial'){delivered=Number(b.delivered_kg);const previous=state.events.filter(e=>String(e.load_id)===String(loadId)&&e.kind==='partial').reduce((n,e)=>n+Number(e.delivered_kg),0);
-     if(!Number.isFinite(delivered)||delivered<=0||!l.weight_kg||previous+delivered>=Number(l.weight_kg))throw D.fail('Indica un peso parcial positivo menor al saldo pendiente');}
-   }
-   const row=(await db.query('insert into trip_itinerary_events(company_id,trip_id,itinerary_version,event_key,stop_key,load_id,kind,minutes,delivered_kg,reason,actor_user_id,actor_name) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning *',[trip.company_id,trip.id,version,eventKey,stop?.key||null,loadId,kind,delay,delivered,reason,req.user.id,req.user.name||'Usuario autenticado'])).rows[0];
-   await db.query('insert into trip_events(trip_id,event_type,notes,created_by,details) values($1,$2,$3,$4,$5)',[trip.id,'Itinerario: '+kind,reason||'Registro de '+kind,req.user.id,{stop_key:stop?.key||null,load_id:loadId,itinerary_event_id:row.id}]);
-   await writeAudit(db,req,{companyId:trip.company_id,action:'create',entity:'trip_itinerary_event',entityId:row.id,afterData:row});await db.query('COMMIT');res.status(201).json(row);
+   if(!locked)throw D.fail('Viaje no disponible',404);
+   const result=await recordItineraryEvent(db,req,locked,req.body||{});
+   await db.query('COMMIT');res.status(result.created?201:200).json(result.row);
   }catch(e){await db.query('ROLLBACK');throw e;}finally{db.release();}
  });
 }
-module.exports={registerItineraryRoutes,currentPlan,checkItinerary,checkCompletion,vehicleState,reviewEquipmentChange,transferredLoad};
+module.exports={registerItineraryRoutes,currentPlan,loadState,recordItineraryEvent,checkItinerary,checkCompletion,vehicleState,reviewEquipmentChange,transferredLoad};

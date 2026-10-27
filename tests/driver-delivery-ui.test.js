@@ -5,21 +5,21 @@ const path=require('node:path');
 const vm=require('node:vm');
 
 // Ejecuta el script real con una superficie DOM mínima y sin servicios externos.
-function deliverySurface({geolocation,failPost=false,load={id:8,cargo:'Carga de prueba'},drawn=true,storage=new Map(),user={id:1,company_id:10,driver_id:4},fetchDelivery,unavailableStorage=false,readerClass}={}){
+function deliverySurface({geolocation,failPost=false,load={id:8,cargo:'Carga de prueba'},drawn=true,storage=new Map(),user={id:1,company_id:10,driver_id:4},fetchDelivery,unavailableStorage=false,readerClass,mobile}={}){
   const elements=new Map();
   for(const selector of ['.delivery-photo','.delivery-preview','.clear-signature','.submit-delivery','.delivery-error','.signature-host','.driver-hint']){
     elements.set(selector,{hidden:true,disabled:false,files:[],append(){}});
   }
-  for(const [selector,value] of [['.delivery-recipient','Receptor de prueba'],['.delivery-rut',''],['.delivery-notes','']])elements.set(selector,{value});
-  const card={innerHTML:'',querySelector:selector=>elements.get(selector),insertAdjacentHTML(){}};
-  const context2d={fillRect(){},beginPath(){},moveTo(){},lineTo(){},stroke(){}};
+  for(const [selector,value] of [['.delivery-recipient','Receptor de prueba'],['.delivery-rut',''],['.delivery-notes','']])elements.set(selector,{value,addEventListener(type,handler){this[type]=handler;}});
+  const card={innerHTML:'',querySelector:selector=>elements.get(selector),insertAdjacentHTML(){},append(){}};
+  const context2d={fillRect(){},beginPath(){},moveTo(){},lineTo(){},stroke(){},drawImage(){}};
   const canvas={width:0,height:0,getContext:()=>context2d,addEventListener(){},toDataURL:()=> 'data:image/png;base64,firma-de-prueba'};
   const calls=[];
   let sequence=0;
   const navigator=geolocation?{geolocation}:{};
   const sandbox={
-    document:{getElementById:()=>({querySelector:()=>null}),createElement:tag=>tag==='canvas'?canvas:card},
-    window:{},navigator,Auth:{user},FileReader:readerClass,crypto:{randomUUID:()=> `submission-de-prueba-${++sequence}`},
+    document:{getElementById:()=>({querySelector:()=>null}),createElement:tag=>tag==='canvas'?canvas:tag==='p'?{setAttribute(){}}:card},
+    window:{...(mobile?{DriverMobile:mobile}:{})},navigator,Auth:{user},FileReader:readerClass,crypto:{randomUUID:()=> `submission-de-prueba-${++sequence}`},Image:class{set src(value){this.onload();}},
     sessionStorage:{getItem:key=>{if(unavailableStorage)throw Error('Storage bloqueado');return storage.get(key)||null},setItem:(key,value)=>{if(unavailableStorage)throw Error('Storage bloqueado');storage.set(key,value)},removeItem:key=>{if(unavailableStorage)throw Error('Storage bloqueado');storage.delete(key)}},
     async fetch(url,options){
       calls.push({url,payload:JSON.parse(options.body)});
@@ -36,7 +36,7 @@ function deliverySurface({geolocation,failPost=false,load={id:8,cargo:'Carga de 
     return form;
   };
   open();
-  return {calls,elements,navigator,storage,open,endSession:sandbox.window.testEndSession,endView:sandbox.window.testEndView,submit:()=>elements.get('.submit-delivery').onclick()};
+  return {calls,elements,navigator,storage,open,canvas,card,endSession:sandbox.window.testEndSession,endView:sandbox.window.testEndView,submit:()=>elements.get('.submit-delivery').onclick()};
 }
 
 async function submitWithoutBlocking(surface){
@@ -48,6 +48,22 @@ async function submitWithoutBlocking(surface){
     ]);
   }finally{clearTimeout(timer)}
 }
+
+test('POD móvil recupera campos y submission local, conserva versiones originales y distingue envío pendiente',async()=>{
+ const sent=[],saved={submission:'saved-submission',context:{version:2,resource_version:3},payload:{recipient_name:'Receptor recuperado',recipient_rut:'12345678-5',notes:'Observación local',signature:'data:image/png;base64,firma',photo:'data:image/jpeg;base64,foto'}};
+ const mobile={context:()=>({version:9,resource_version:9}),draft:async()=>saved,delivery:async(id,payload)=>{sent.push({id,payload});return {pending:true};}};
+ const s=deliverySurface({mobile});await new Promise(resolve=>setImmediate(resolve));await s.submit();
+ assert.equal(sent.length,1);assert.equal(sent[0].payload.client_submission_id,'saved-submission');assert.equal(sent[0].payload.recipient_name,'Receptor recuperado');assert.equal(sent[0].payload.photo,saved.payload.photo);assert.equal(sent[0].payload.version,2);assert.equal(sent[0].payload.resource_version,3);assert.match(s.card.innerHTML,/Falta confirmación/);assert.equal(s.calls.length,0);
+});
+test('POD móvil guarda borrador al editar y no guarda datos de una sesión que cambió',async()=>{
+ const saves=[],mobile={context:()=>({version:1,resource_version:2}),draft:async(id,value)=>{if(value)saves.push({id,value});return null;}};
+ const s=deliverySurface({mobile});await new Promise(resolve=>setImmediate(resolve));s.elements.get('.delivery-recipient').value='Nuevo receptor';await s.elements.get('.delivery-recipient').input();assert.equal(saves.length,1);assert.equal(saves[0].value.payload.recipient_name,'Nuevo receptor');assert.equal(saves[0].value.state,'draft');
+ s.endSession();await s.elements.get('.delivery-notes').input();assert.equal(saves.length,1);
+});
+test('POD móvil sin contexto validado no encola la entrega',async()=>{
+ let sends=0;const mobile={context:()=>null,draft:async()=>null,delivery:async()=>{sends++;}};
+ const s=deliverySurface({mobile});await new Promise(resolve=>setImmediate(resolve));await s.submit();assert.equal(sends,0);assert.match(s.elements.get('.delivery-error').textContent,/Actualiza el viaje/);assert.equal(s.elements.get('.submit-delivery').disabled,false);
+});
 
 test('POD no modifica la API nativa de geolocalización',()=>{
   const getCurrentPosition=()=>{};

@@ -8,7 +8,7 @@
  let gpsMessage='Abre un viaje En tránsito o Detenido para activar la ubicación.',gpsMode='paused',gpsConfirmed=null;
  const status=v=>`<span class="driver-status">${esc(v||'Sin estado')}</span>`;
  function expireSession(){
-  stopGps();sessionVersion++;viewVersion++;Auth.token='';Auth.user=null;
+  stopGps();window.DriverMobile?.pause();sessionVersion++;viewVersion++;Auth.token='';Auth.user=null;
   localStorage.removeItem('fleet_token');localStorage.removeItem('fleet_company_context');
   login('Tu sesión venció. Inicia sesión nuevamente.');
  }
@@ -34,6 +34,7 @@
  function authenticatedScreen(content){
   root.innerHTML=`<section class="driver-shell">${accountHeader()}${Auth.user?.role_code==='driver'&&Auth.user.driver_id&&!Auth.user.must_change_password?gpsPanel():''}${content}</section>`;
   renderGps();
+  window.DriverMobile?.mountOutbox();
   root.querySelector('[data-driver-logout]').onclick=logoutDriver;
   root.querySelector('[data-driver-password]').onclick=()=>{if(leaveForm())changePassword()};
   for(const selector of ['[data-driver-home]','[data-driver-refresh]']){
@@ -45,6 +46,7 @@
  }
  async function logoutDriver(){
   if(signingOut||!confirm('¿Cerrar sesión? Se detendrá el GPS en este dispositivo y se perderán los datos sin guardar.'))return;
+  try{if(window.DriverMobile&&!await window.DriverMobile.logout())return;}catch(e){alert('No se pudo revisar el almacenamiento local: '+e.message);return;}
   signingOut=true;stopGps();sessionVersion++;viewVersion++;
   root.innerHTML='<section class="driver-shell"><div class="driver-card" role="status"><h1>Cerrando sesión…</h1><p>GPS detenido. Espera la confirmación antes de dejar el dispositivo.</p></div></section>';
   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),8000);
@@ -218,7 +220,7 @@
   }
  });
  async function loadChecklist(id){const box=root.querySelector('.driver-checklist');try{const data=await api(`/api/driver/trips/${encodeURIComponent(id)}/checklist`);const current=data.checklists?.[0];box.innerHTML=`<h3>Checklist preoperacional</h3>${current?`<p>${status(current.status)} ${current.status==='Rechazado'?'<span class="driver-error">Incidencia generada para gestión operacional.</span>':''}</p><textarea class="driver-checklist-items" ${current.status!=='Pendiente'?'disabled':''}>${esc(JSON.stringify(current.items||[],null,2))}</textarea><textarea class="driver-checklist-notes" placeholder="Observaciones" ${current.status!=='Pendiente'?'disabled':''}>${esc(current.observations||'')}</textarea>${current.status==='Pendiente'?'<button class="driver-button" data-check-action="Aprobado">Cerrar aprobado</button><button class="driver-button driver-reject" data-check-action="Rechazado">Cerrar rechazado</button>':''}`:'<p>No hay checklist registrado.</p><button class="driver-button" id="startChecklist">Iniciar checklist</button>'}`;root.querySelector('#startChecklist')?.addEventListener('click',async()=>{try{await api(`/api/driver/trips/${encodeURIComponent(id)}/checklist`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:[]})});await loadChecklist(id)}catch(e){box.insertAdjacentHTML('beforeend',`<p class="driver-error">${esc(e.message)}</p>`)}});root.querySelectorAll('[data-check-action]').forEach(button=>button.addEventListener('click',async()=>{button.disabled=true;try{const items=JSON.parse(root.querySelector('.driver-checklist-items').value||'[]');await api(`/api/driver/checklists/${encodeURIComponent(current.id)}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:button.dataset.checkAction,items,observations:root.querySelector('.driver-checklist-notes').value})});await loadChecklist(id)}catch(e){box.insertAdjacentHTML('beforeend',`<p class="driver-error">${esc(e.message)}</p>`);button.disabled=false}}))}catch(e){box.innerHTML=`<p class="driver-error">${esc(e.message)}</p>`}}
- function signatureCanvas(){const canvas=document.createElement('canvas');canvas.width=900;canvas.height=360;canvas.className='driver-signature-canvas';const ctx=canvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.strokeStyle='#173b5d';ctx.lineWidth=4;ctx.lineCap='round';let drawing=false,empty=true;const point=e=>{const r=canvas.getBoundingClientRect();return{x:(e.clientX-r.left)*canvas.width/r.width,y:(e.clientY-r.top)*canvas.height/r.height}};canvas.addEventListener('pointerdown',e=>{drawing=true;empty=false;canvas.setPointerCapture(e.pointerId);const p=point(e);ctx.beginPath();ctx.moveTo(p.x,p.y)});canvas.addEventListener('pointermove',e=>{if(!drawing)return;const p=point(e);ctx.lineTo(p.x,p.y);ctx.stroke()});canvas.addEventListener('pointerup',()=>{drawing=false});canvas.addEventListener('pointercancel',()=>{drawing=false});canvas.clear=()=>{ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.strokeStyle='#173b5d';empty=true};canvas.value=()=>empty?'':canvas.toDataURL('image/png');return canvas}
+ function signatureCanvas(){const canvas=document.createElement('canvas');canvas.width=900;canvas.height=360;canvas.className='driver-signature-canvas';const ctx=canvas.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.strokeStyle='#173b5d';ctx.lineWidth=4;ctx.lineCap='round';let drawing=false,empty=true;const point=e=>{const r=canvas.getBoundingClientRect();return{x:(e.clientX-r.left)*canvas.width/r.width,y:(e.clientY-r.top)*canvas.height/r.height}};canvas.addEventListener('pointerdown',e=>{drawing=true;empty=false;canvas.setPointerCapture(e.pointerId);const p=point(e);ctx.beginPath();ctx.moveTo(p.x,p.y)});canvas.addEventListener('pointermove',e=>{if(!drawing)return;const p=point(e);ctx.lineTo(p.x,p.y);ctx.stroke()});canvas.addEventListener('pointerup',()=>{drawing=false;canvas.onSignatureChange?.();});canvas.addEventListener('pointercancel',()=>{drawing=false});canvas.clear=()=>{ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.strokeStyle='#173b5d';empty=true;canvas.onSignatureChange?.();};canvas.restore=data=>new Promise((resolve,reject)=>{const image=new Image();image.onload=()=>{ctx.drawImage(image,0,0,canvas.width,canvas.height);empty=false;resolve();};image.onerror=()=>reject(Error('No se pudo recuperar la firma guardada'));image.src=data;});canvas.value=()=>empty?'':canvas.toDataURL('image/png');return canvas}
  const pendingDeliverySubmissions=new Map();
  function deliverySubmissionKey(tripId,loadId){
   const user=typeof Auth==='undefined'?null:Auth.user;
@@ -241,7 +243,7 @@
   const hasSignature=Boolean(draft?.evidence?.some(file=>file.type==='signature'&&file.exists===true));
   const hasPhoto=Boolean(draft?.evidence?.some(file=>file.type==='photo'&&file.exists===true));
   const key=deliverySubmissionKey(tripId,load.id);
-  const submission=draft?draftSubmission:readDeliverySubmission(key)||crypto.randomUUID();
+  let submission=draft?draftSubmission:readDeliverySubmission(key)||crypto.randomUUID();
   let sending=false,completed=false;
   const card=document.createElement('div');
   card.className='driver-card driver-delivery-form';
@@ -250,6 +252,32 @@
   card.querySelector('.signature-host').append(canvas);
   const photo=card.querySelector('.delivery-photo'),preview=card.querySelector('.delivery-preview');
   const button=card.querySelector('.submit-delivery'),error=card.querySelector('.delivery-error');
+  const draftKey='draft-delivery-'+tripId+'-'+load.id;
+  const localSession=sessionVersion,localView=viewVersion;
+  let savedPhoto='',restoring=true,draftContext=window.DriverMobile?.context(tripId),localRevision=0,photoBusy=false;
+  let localNotice=null;
+  if(window.DriverMobile){localNotice=document.createElement('p');localNotice.setAttribute('role','status');card.append(localNotice);}
+  function fields(){return {recipient_name:card.querySelector('.delivery-recipient').value,recipient_rut:card.querySelector('.delivery-rut').value,notes:card.querySelector('.delivery-notes').value,signature:canvas.value(),photo:savedPhoto};}
+  async function saveLocal(){
+   if(!window.DriverMobile||restoring||completed||sending||localSession!==sessionVersion||localView!==viewVersion)return;
+   const revision=++localRevision;
+   try{await window.DriverMobile.draft(draftKey,{id:draftKey,tripId,kind:'delivery',state:'draft',submission,payload:fields(),context:draftContext});if(revision===localRevision)localNotice.textContent='Borrador guardado en este teléfono; todavía no es una entrega confirmada.';}
+   catch(e){localNotice.textContent='No guardado: '+e.message;}
+  }
+  if(window.DriverMobile){
+   canvas.onSignatureChange=saveLocal;
+   for(const selector of ['.delivery-recipient','.delivery-rut','.delivery-notes'])card.querySelector(selector).addEventListener('input',saveLocal);
+   window.DriverMobile.draft(draftKey).then(async saved=>{
+    if(localSession!==sessionVersion||localView!==viewVersion)return;
+    if(saved?.payload){
+     for(const [selector,field] of [['.delivery-recipient','recipient_name'],['.delivery-rut','recipient_rut'],['.delivery-notes','notes']])card.querySelector(selector).value=saved.payload[field]||'';
+     if(saved.payload.signature)await canvas.restore(saved.payload.signature);
+     savedPhoto=saved.payload.photo||'';if(savedPhoto){preview.src=savedPhoto;preview.hidden=false;}
+     draftContext=saved.context;submission=saved.submission;rememberDeliverySubmission(key,submission);
+     localNotice.textContent='Borrador recuperado del teléfono. Revisa los datos antes de enviarlo.';
+    }
+   }).catch(e=>{localNotice.textContent=e.message;}).finally(()=>{restoring=false;});
+  }else restoring=false;
   if(draft){
    card.querySelector('.delivery-recipient').value=draft.recipient_name||'';
    card.querySelector('.delivery-rut').value=draft.recipient_rut||'';
@@ -263,14 +291,18 @@
    error.hidden=false;
    button.disabled=true;
   }
-  photo.onchange=()=>{
+  photo.onchange=async()=>{
    const file=photo.files?.[0];
-   if(!file){preview.hidden=true;return}
-   preview.src=URL.createObjectURL(file);preview.hidden=false;
+   if(!file){savedPhoto='';preview.hidden=true;await saveLocal();return}
+   photoBusy=true;
+   try{if(window.DriverMobile){savedPhoto=await window.DriverMobile.photoData(file);preview.src=savedPhoto;await saveLocal();}else preview.src=URL.createObjectURL(file);preview.hidden=false;}
+   catch(e){photo.value='';error.textContent=e.message;error.hidden=false;}
+   finally{photoBusy=false;}
   };
   card.querySelector('.clear-signature').onclick=()=>canvas.clear();
   button.onclick=async()=>{
    if(sending||completed||!submission)return;
+   if(restoring||photoBusy){error.textContent='Espera mientras se recupera el borrador o se prepara la foto.';error.hidden=false;return;}
    const version=sessionVersion,view=viewVersion;
    const signature=canvas.value(),recipient=card.querySelector('.delivery-recipient').value.trim();
    if(!signature&&!hasSignature){error.textContent='La firma del receptor es obligatoria.';error.hidden=false;return}
@@ -284,14 +316,20 @@
     const file=photo.files?.[0];
     const payload={load_id:load.id,client_submission_id:submission,recipient_name:recipient,recipient_rut:card.querySelector('.delivery-rut').value.trim()||undefined,notes:card.querySelector('.delivery-notes').value.trim()||undefined};
     if(signature)payload.signature=signature;
-    if(file)payload.photo=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file)});
+    if(window.DriverMobile&&savedPhoto)payload.photo=savedPhoto;
+    else if(file)payload.photo=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file)});
     if(version!==sessionVersion||view!==viewVersion)return;
     if(position){payload.latitude=position.coords.latitude;payload.longitude=position.coords.longitude}
-    await api('/api/driver/trips/'+encodeURIComponent(tripId)+'/deliveries',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    let pending=false;
+    if(window.DriverMobile){
+     if(!draftContext)throw Error('Actualiza el viaje con conexión antes de preparar esta entrega.');
+     payload.resource_version=draftContext.resource_version;payload.version=draftContext.version;
+     const result=await window.DriverMobile.delivery(tripId,payload);pending=result.pending;
+    }else await api('/api/driver/trips/'+encodeURIComponent(tripId)+'/deliveries',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     completed=true;
     clearDeliverySubmission(key);
-    card.innerHTML='<p class="driver-success">Entrega registrada correctamente.</p>';
-    if(view===viewVersion)await loadDeliveries(tripId);
+    card.innerHTML=pending?'<p role="status">Entrega guardada en este teléfono. Falta confirmación del servidor: revisa Pendientes del teléfono.</p>':'<p class="driver-success">Entrega registrada correctamente.</p>';
+    if(!pending&&view===viewVersion)await loadDeliveries(tripId);
    }catch(e){
     error.textContent=e.message||'No se pudo registrar la entrega.';
     error.hidden=false;button.disabled=false;button.textContent='Reintentar entrega';
@@ -299,10 +337,10 @@
   };
   return card;
  }
- async function loadDeliveries(tripId){const detail=root.querySelector('.driver-detail');if(!detail)return;let box=detail.querySelector('.driver-deliveries');if(!box){box=document.createElement('div');box.className='driver-card driver-deliveries';detail.append(box)}box.innerHTML='<h3>Entregas</h3><p>Cargando cargas…</p>';try{const data=await api(`/api/driver/trips/${encodeURIComponent(tripId)}/deliveries`);box.innerHTML=`<h3>Entregas</h3>${data.deliveries?.length?data.deliveries.map(load=>`<div class="driver-delivery-row"><div><b>${esc(load.cargo)}</b><span>${esc(load.status)}</span></div>${load.status==='Entregada'?'<span class="driver-success">Completada</span>':'<button class="driver-button delivery-start">Entregar</button>'}</div>`).join(''):'<p>No hay cargas registradas.</p>'}`;const rows=[...box.querySelectorAll('.driver-delivery-row')];data.deliveries?.forEach((load,index)=>rows[index]?.querySelector('.delivery-start')?.addEventListener('click',()=>{const old=box.querySelector('.driver-delivery-form');old?.remove();box.append(deliveryForm(tripId,load))}))}catch(e){box.innerHTML=`<h3>Entregas</h3><p class="driver-error">${esc(e.message)}</p>`}}
- const _driverLoadChecklist=loadChecklist;loadChecklist=async id=>{const version=sessionVersion,view=viewVersion;await _driverLoadChecklist(id);if(version===sessionVersion&&view===viewVersion)await loadDeliveries(id)};
+ async function loadDeliveries(tripId){const detail=root.querySelector('.driver-detail');if(!detail)return;let box=detail.querySelector('.driver-deliveries');if(!box){box=document.createElement('div');box.className='driver-card driver-deliveries';detail.append(box)}box.innerHTML='<h3>Entregas</h3><p>Cargando cargas…</p>';const version=sessionVersion,view=viewVersion;try{const context=window.DriverMobile?await window.DriverMobile.ensureContext(tripId):null;const data=await api(`/api/driver/trips/${encodeURIComponent(tripId)}/deliveries`);if(version!==sessionVersion||view!==viewVersion)return;box.innerHTML=`<h3>Entregas</h3>${context?.version?'<p>Solo puedes entregar las cargas de la parada actual después de registrar tu llegada.</p>':''}${data.deliveries?.length?data.deliveries.map(load=>`<div class="driver-delivery-row"><div><b>${esc(load.cargo)}</b><span>${esc(load.status)}</span></div>${load.status==='Entregada'?'<span class="driver-success">Completada</span>':`<button class="driver-button delivery-start" ${context?.version&&(!context.next_stop?.actual_arrival||!context.loads.some(l=>String(l.id)===String(load.id)&&l.delivery===context.next_stop.key))?'disabled':''}>Entregar</button>`}</div>`).join(''):'<p>No hay cargas registradas.</p>'}`;const rows=[...box.querySelectorAll('.driver-delivery-row')];data.deliveries?.forEach((load,index)=>rows[index]?.querySelector('.delivery-start')?.addEventListener('click',()=>{const old=box.querySelector('.driver-delivery-form');old?.remove();box.append(deliveryForm(tripId,load))}))}catch(e){if(version!==sessionVersion||view!==viewVersion)return;box.innerHTML=`<h3>Entregas</h3><p class="driver-error">${esc(e.message)}</p>`}}
+ const _driverLoadChecklist=loadChecklist;loadChecklist=async id=>{const version=sessionVersion,view=viewVersion;if(window.DriverMobile)await window.DriverMobile.checklist(id,root.querySelector('.driver-checklist'));else await _driverLoadChecklist(id);if(version===sessionVersion&&view===viewVersion)await loadDeliveries(id)};
  function renderActions(allowed=[]){return `<div class="driver-actions">${allowed.map(s=>`<button class="driver-button driver-status-action" data-status="${esc(s)}">${esc(s)}</button>`).join('')}</div>`}
- function renderDetail(trip,allowed){root.querySelector('.driver-detail').innerHTML=`<button class="driver-link" id="backTrips">← Volver a viajes</button><div class="driver-card"><h2>${esc(trip.trip_number)}</h2>${status(trip.status)}${renderActions(allowed)}<div class="driver-meta"><div><small>Origen</small><b>${esc(trip.origin)}</b></div><div><small>Destino</small><b>${esc(trip.destination)}</b></div><div><small>Salida</small><b>${date(trip.planned_departure)}</b></div><div><small>Camión</small><b>${esc(trip.patente||'No asignado')}</b></div>${trip.composition_snapshot?.trailer?`<div><small>Remolque / semirremolque</small><b>${esc(trip.composition_snapshot.trailer.patente)}</b></div>`:''}<div><small>Cliente</small><b>${esc(trip.client_name||'No informado')}</b></div><div><small>Ruta</small><b>${esc(trip.route_origin||trip.origin)} → ${esc(trip.route_destination||trip.destination)}</b></div></div><h3>Cargas</h3>${trip.loads?.length?`<ul class="driver-list">${trip.loads.map(load=>`<li><b>${esc(load.cargo)}</b><span>${esc(load.status)} · ${esc(load.weight_kg)} kg</span></li>`).join('')}</ul>`:'<p>No hay cargas registradas.</p>'}</div><div class="driver-card driver-checklist"><p>Cargando checklist…</p></div>`;root.querySelector('#backTrips').onclick=()=>{if(leaveForm())loadTrips()};root.querySelectorAll('.driver-status-action').forEach(button=>button.onclick=()=>changeStatus(trip.id,button));prepareGps(trip);loadChecklist(trip.id)}
+ function renderDetail(trip,allowed){root.querySelector('.driver-detail').innerHTML=`<button class="driver-link" id="backTrips">← Volver a viajes</button><div class="driver-card"><h2>${esc(trip.trip_number)}</h2>${status(trip.status)}${renderActions(allowed)}<div class="driver-meta"><div><small>Origen</small><b>${esc(trip.origin)}</b></div><div><small>Destino</small><b>${esc(trip.destination)}</b></div><div><small>Salida</small><b>${date(trip.planned_departure)}</b></div><div><small>Camión</small><b>${esc(trip.patente||'No asignado')}</b></div>${trip.composition_snapshot?.trailer?`<div><small>Remolque / semirremolque</small><b>${esc(trip.composition_snapshot.trailer.patente)}</b></div>`:''}<div><small>Cliente</small><b>${esc(trip.client_name||'No informado')}</b></div><div><small>Ruta</small><b>${esc(trip.route_origin||trip.origin)} → ${esc(trip.route_destination||trip.destination)}</b></div></div><h3>Cargas</h3>${trip.loads?.length?`<ul class="driver-list">${trip.loads.map(load=>`<li><b>${esc(load.cargo)}</b><span>${esc(load.status)} · ${esc(load.weight_kg)} kg</span></li>`).join('')}</ul>`:'<p>No hay cargas registradas.</p>'}</div><div class="driver-card driver-checklist"><p>Cargando checklist…</p></div>`;root.querySelector('#backTrips').onclick=()=>{if(leaveForm())loadTrips()};root.querySelectorAll('.driver-status-action').forEach(button=>button.onclick=()=>changeStatus(trip.id,button));prepareGps(trip);window.DriverMobile?.workflow(trip,root.querySelector('.driver-detail'),()=>{if(!root.querySelector('.driver-delivery-form'))return loadDeliveries(trip.id);});loadChecklist(trip.id)}
  async function loadDetail(id){
   const view=++viewVersion,version=sessionVersion,box=root.querySelector('.driver-detail');
   if(!box||signingOut)return;
@@ -331,12 +369,14 @@
   }catch(e){if(version===sessionVersion&&view===viewVersion)list.innerHTML=`<div class="driver-card"><p class="driver-error" role="alert">${esc(e.message)}</p><button class="driver-button" id="retryDriverTrips">Reintentar</button></div>`;root.querySelector('#retryDriverTrips')?.addEventListener('click',loadTrips)}
  }
  window.driverBoot=({authenticated=false,error=null,setupRequired=false}={})=>{
-  stopGps();gpsTrip=null;gpsConfirmed=null;gpsNeedsReview=false;gpsMessage='Abre un viaje En tránsito o Detenido para activar la ubicación.';sessionVersion++;viewVersion++;
+  window.DriverMobile?.pause();stopGps();gpsTrip=null;gpsConfirmed=null;gpsNeedsReview=false;gpsMessage='Abre un viaje En tránsito o Detenido para activar la ubicación.';sessionVersion++;viewVersion++;
   if(setupRequired)return login('La configuración inicial debe realizarse desde la aplicación administrativa.');
   if(!authenticated||!Auth.user)return login(error?.message||'Inicia sesión para acceder.');
   if(Auth.user.must_change_password)return changePassword();
   if(Auth.user.role_code!=='driver')return authenticatedScreen('<div class="driver-card driver-error"><h1>Acceso no disponible</h1><p>Esta superficie está reservada para usuarios con rol conductor. Puedes cerrar sesión e ingresar con otra cuenta.</p></div>');
   if(!Auth.user.driver_id)return authenticatedScreen('<div class="driver-card driver-error"><h1>Conductor no asociado</h1><p>Tu cuenta todavía no tiene un conductor asociado. Solicita a administración que revise la asociación.</p></div>');
+  window.DriverMobile?.bind();
+  window.DriverMobile?.sync();
   return loadTrips();
  };
  const loadDetailWithDeliveries=loadDetail;loadDetail=async id=>{const version=sessionVersion,view=viewVersion+1;await loadDetailWithDeliveries(id);if(version===sessionVersion&&view===viewVersion&&root.querySelector('.driver-detail'))await loadDeliveries(id)};
