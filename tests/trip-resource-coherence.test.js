@@ -294,3 +294,15 @@ test('reabrir un viaje incompleto como Planificado restablece su aviso persisten
   assert.ok(pool.calls.some(call=>call.sql.startsWith('insert into alerts')));
  }
 });
+
+test('un checklist rechazado no puede eliminarse para eludir el bloqueo operacional',async()=>{
+ const source=fs.readFileSync(require.resolve('../server.js'),'utf8').replace(/\r\n/g,'\n');
+ const start=source.indexOf('app.delete("/api/:table/:id"'),end=source.indexOf('\n',start);
+ const calls=[];let handler;
+ const db={async query(sql){calls.push(sql);return {rowCount:1,rows:[{id:5,company_id:10,source_type:'checklist',condition_code:'checklist_rejected',resolved:false}]}},release(){}};
+ Function('app','pool','requireTablePermission','writePermissions','safeTable','isAdmin','companyId','writeAudit',source.slice(start,end))(
+  {delete(path,...handlers){handler=handlers.at(-1)}},{connect:async()=>db},()=>()=>{}, {},()=>true,()=>false,()=>10,()=>{throw Error('No debe confirmar una eliminación rechazada')});
+ const res={statusCode:200,status(code){this.statusCode=code;return this},json(payload){this.payload=payload;return this}};
+ await handler({params:{table:'alerts',id:'5'}},res);
+ assert.equal(res.statusCode,409);assert.equal(calls.at(-1),'ROLLBACK');assert.equal(calls.includes('COMMIT'),false);
+});

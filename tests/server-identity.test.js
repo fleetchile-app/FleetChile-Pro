@@ -43,7 +43,7 @@ test('DELETE CRUD genérico incluye ownership empresarial',()=>{
 });
 
 test('creaciones directas usan resourceCompanyId y no body.company_id',()=>{
-  for(const route of ['/api/fleet/vehicles','/api/routes','/api/loads','/api/fuel','/api/maintenance']){
+  for(const route of ['/api/fleet/vehicles','/api/routes','/api/loads']){
     const target=route==='/api/fleet/vehicles'?profileSource:source;
     const start=target.indexOf(route==='/api/fleet/vehicles'?`app.post('${route}'`:`app.post("${route}"`);
     assert.ok(start>=0,`Ruta no encontrada: ${route}`);

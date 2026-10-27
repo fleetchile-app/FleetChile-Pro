@@ -22,3 +22,18 @@ test('readiness failure rolls back operations assign/status and driver start',as
 test('completion, stop and cancellation do not invoke readiness guard',async()=>{
  for(const status of ['Detenido','Completado','Cancelado']){let called=0;const p=pool(),a=app();registerOperationsRoutes(a,p,{assertTripResourcesReady:async()=>{called++}});const res=await invoke(a.route('patch','/api/operations/trips/:id/status'),{user,params:{id:'7'},body:{status}});assert.equal(res.statusCode,200,JSON.stringify(res.payload));assert.equal(called,0)}
 });
+
+test('todas las vías de activación y reasignación entregan identidad y fechas para excluir su propia reserva',async()=>{
+ for(const [register,path,body] of [
+  [registerCoreRoutes,'/api/trips/:id/status',{status:'En tránsito'}],
+  [registerOperationsRoutes,'/api/operations/trips/:id/status',{status:'En tránsito'}],
+  [registerOperationsRoutes,'/api/operations/trips/:id/assign',{truck_id:31,driver_id:41,client_id:51}],
+  [registerOperationsRoutes,'/api/driver/trips/:id/status',{status:'En tránsito'}]
+ ]){
+  const p=pool(path.includes('/driver/')?'Asignado':'Planificado'),a=app();let called=false;
+  register(a,p,{assertTripResourcesReady:async(db,resources)=>{called=true;assert.equal(resources.tripId,7);assert.equal(resources.companyId,10);assert.ok(Object.hasOwn(resources,'plannedDeparture'));assert.ok(Object.hasOwn(resources,'plannedArrival'));throw Object.assign(Error('Recurso reservado'),{status:409,code:'TRIP_RESOURCE_CONFLICT',details:{conflicts:[{trip_id:99,trip_number:'Otro viaje'}]}});}});
+  const res=await invoke(a.route('patch',path),{user:path.includes('/driver/')?{...user,role_code:'driver'}:user,params:{id:'7'},body});
+  assert.equal(called,true);assert.equal(res.statusCode,409);assert.equal(res.payload.code,'TRIP_RESOURCE_CONFLICT');assert.equal(p.calls.at(-1),'ROLLBACK');
+  if(path.includes('/driver/'))assert.equal(res.payload.details,undefined);else assert.equal(res.payload.details.conflicts[0].trip_id,99);
+ }
+});

@@ -132,7 +132,7 @@ test('PATCH private own identity works with legacy company mismatch and audits A
   const h=harness(company(),[begin(),target([own]),view([before]),
     {sql:/^update users set name=\$1,phone=\$2,password_hash=\$3,updated_at=now\(\) where id=\$4 returning id$/,rows:[{id:42}],check:(sql,v)=>{
       assert.deepEqual([v[0],v[1],v[3]],['Nuevo','123','42']);assert.match(v[2],/^scrypt\$/);assert.notEqual(v[2],'new-password-123');
-    }},view([after]),responseView(),audit(10),commit()]);
+    }},{sql:/^delete from user_sessions where user_id=\$1$/,values:[42]},view([after]),responseView(),audit(10),commit()]);
   const res=await h.invoke('patch','/api/users/:id',{name:'Nuevo',phone:'123',password:'new-password-123',company_id:20});
   assert.equal(res.statusCode,200);assert.equal(res.payload.id,42);
   assert.equal(h.released,1);
@@ -142,7 +142,7 @@ for(const [name,actor,cid] of [['platform',platform,null],['legacy',legacy,10]])
   const h=harness(actor(),[begin(),{sql:/^select id from users where id=\$1 and \(\$2=true or company_id=\$3\) for update$/,values:['42',true,cid],rows:[{id:42}]},
     ...(name==='platform'?[{sql:/^select 1 from company_people where user_id=\$1 limit 1 for update$/,values:['42'],rows:[]}]:[]),view([user]),
     {sql:/^select id,code from roles/,values:[5],rows:[{id:5,code:'manager'}]},
-    {sql:/^update users set role_id=\$1,active=\$2/,values:[5,false,'42',true,cid],rows:[{id:42}]},view([user]),responseView(),audit(20),commit()]);
+    {sql:/^update users set role_id=\$1,active=\$2/,values:[5,false,'42',true,cid],rows:[{id:42}]},{sql:/^delete from user_sessions where user_id=\$1$/,values:[42]},view([user]),responseView(),audit(20),commit()]);
   assert.equal((await h.invoke('patch','/api/users/:id',{role_id:5,active:false})).statusCode,200);
 });
 test('PATCH global platform cannot change role of registered personnel through global identity',async()=>{

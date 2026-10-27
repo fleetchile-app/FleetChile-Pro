@@ -2,6 +2,13 @@
 const {companyDate}=require('./personnel-domain');
 
 const ROAD_CODES=['circulation','soap','inspection'];
+function operationalReasons(row){
+ const reasons=[];
+ if(['Mantención','Fuera de servicio','Inactivo','Suspendido'].includes(row.status))reasons.push(`Vehículo ${row.status.toLowerCase()}`);
+ if(row.maintenance_in_progress)reasons.push('El vehículo tiene una mantención en proceso');
+ if(row.checklist_rejected)reasons.push('El vehículo tiene un checklist rechazado pendiente de resolución');
+ return reasons;
+}
 function day(value,zone='America/Santiago'){
   const d=value instanceof Date?new Date(value):new Date(value||Date.now());
   if(Number.isNaN(d.getTime()))throw Object.assign(new Error('Fecha inválida'),{status:400,code:'INVALID_DATE'});
@@ -24,8 +31,14 @@ async function assertVehicleRoadReady(db,{companyId,truckId,now,lock=false}={}){
   const expired=ROAD_CODES.filter(code=>expiries[code]?.expires_at&&String(expiries[code].expires_at).slice(0,10)<today);
   const invalidStatus=ROAD_CODES.filter(code=>!missing.includes(code)&&!['Vigente','Por vencer'].includes(expiries[code]?.status));
   const reasons=[...missing.map(c=>`${labels[c]}: fecha faltante`),...expired.map(c=>`${labels[c]}: fecha vencida`),...invalidStatus.map(c=>`${labels[c]}: estado documental no válido`)];
+  const maintenance=(await db.query("select id from maintenance where company_id=$1 and truck_id=$2 and status='En proceso' limit 1",[companyId,truckId])).rows[0];
+  const rejected=(await db.query(`select a.id from alerts a join vehicle_checklists vc on vc.id=a.source_id
+    join trips t on t.id=vc.trip_id and t.company_id=a.company_id
+    where a.company_id=$1 and vc.truck_id=$2 and a.source_type='checklist'
+    and a.condition_code='checklist_rejected' and a.resolved=false limit 1`,[companyId,truckId])).rows[0];
+  reasons.push(...operationalReasons({...row,maintenance_in_progress:Boolean(maintenance),checklist_rejected:Boolean(rejected)}));
   if(reasons.length)throw Object.assign(new Error(`El vehículo no está habilitado para circular: ${reasons.join('; ')}`),{status:409,code:'VEHICLE_NOT_ROAD_READY',details:{missing,expired,invalid_status:invalidStatus,today,missing_labels:missing.map(c=>labels[c]),expired_labels:expired.map(c=>labels[c]),invalid_status_labels:invalidStatus.map(c=>labels[c]),reasons}});
   return {allowed:true,truck_id:row.id,today,documents:expiries};
 }
 
-module.exports={assertVehicleRoadReady,ROAD_CODES};
+module.exports={assertVehicleRoadReady,ROAD_CODES,operationalReasons};

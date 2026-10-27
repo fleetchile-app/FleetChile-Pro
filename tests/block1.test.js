@@ -125,6 +125,7 @@ const txLabel=sql=>{
   if(sql.startsWith('select id from users where'))return 'LOCK_USER';
   if(sql.startsWith('insert into users'))return 'INSERT_USER';
   if(sql.startsWith('update users set'))return 'UPDATE_USER';
+  if(sql.startsWith('delete from user_sessions'))return 'REVOKE_SESSIONS';
   if(sql.includes('coalesce((select json_agg'))return 'USER_VIEW';
   if(sql.startsWith('select u.id,u.name'))return 'AUDIT_VIEW';
   if(sql.startsWith('insert into audit_logs'))return 'AUDIT';
@@ -149,6 +150,7 @@ function usersPool({roleCode='operations',failAt=null,target=true,userView=true}
       if(label==='AUDIT_VIEW'){auditViews++;return {rowCount:1,rows:[auditViews===1?before:after]};}
       if(label==='USER_VIEW')return userView?{rowCount:1,rows:[after]}:{rowCount:0,rows:[]};
       if(label==='AUDIT')return {rowCount:1,rows:[]};
+      if(label==='REVOKE_SESSIONS')return {rowCount:1,rows:[]};
       throw new Error(`Consulta de usuarios inesperada: ${sql}`);
     },
     release(){releases++;}

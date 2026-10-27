@@ -159,7 +159,29 @@ function registerAuthRoutes(app,pool){
     catch { res.status(401).json({error:'No se pudo validar la sesión'}); }
   });
 
-  app.post('/api/auth/change-password',async(req,res)=>{const user=await authenticateToken(pool,req).catch(()=>null);if(!user)return res.status(401).json({error:'Autenticación requerida'});const current=String(req.body?.current_password||''),next=String(req.body?.new_password||''),confirm=String(req.body?.confirm_password||'');if(!current||next.length<10||next!==confirm)return res.status(400).json({error:'La contraseña nueva debe tener al menos 10 caracteres y coincidir'});if(!(await reauthenticateUser(pool,user.id,current)))return res.status(403).json({error:'La contraseña actual no es válida'});const client=await pool.connect();try{await client.query('BEGIN');const hash=await hashPassword(next);await client.query('update users set password_hash=$1,must_change_password=false,updated_at=now() where id=$2',[hash,user.id]);await writeAudit(client,req,{companyId:null,action:'password_change',entity:'user',entityId:user.id,afterData:{must_change_password:false}});await client.query('COMMIT');res.json({ok:true})}catch(e){await client.query('ROLLBACK');res.status(400).json({error:'No se pudo cambiar la contraseña'})}finally{client.release()}});
+  app.post('/api/auth/change-password',async(req,res)=>{
+    const user=await authenticateToken(pool,req).catch(()=>null);
+    if(!user)return res.status(401).json({error:'Autenticación requerida'});
+    const current=String(req.body?.current_password||''),next=String(req.body?.new_password||''),confirm=String(req.body?.confirm_password||'');
+    if(!current||next.length<10||next.length>1024||next!==confirm)return res.status(400).json({error:'La contraseña nueva debe tener entre 10 y 1024 caracteres y coincidir'});
+    const client=await pool.connect();
+    try{
+      await client.query('BEGIN');
+      const locked=(await client.query('select password_hash from users where id=$1 and active=true for update',[user.id])).rows[0];
+      if(!locked||!await verifyPassword(current,locked.password_hash)){
+        await client.query('ROLLBACK');return res.status(403).json({error:'La contraseña actual no es válida'});
+      }
+      const hash=await hashPassword(next);
+      await client.query('update users set password_hash=$1,must_change_password=false,updated_at=now() where id=$2',[hash,user.id]);
+      // Preserve only the session that reauthenticated, including the driver PWA.
+      const raw=(req.get('authorization')||'').slice(7);
+      await client.query('delete from user_sessions where user_id=$1 and token_hash<>$2',[user.id,tokenHash(raw)]);
+      await writeAudit(client,{user,ip:req.ip},{companyId:null,action:'password_change',entity:'user',entityId:user.id,afterData:{must_change_password:false,other_sessions_revoked:true}});
+      await client.query('COMMIT');res.json({ok:true});
+    }catch(e){
+      await client.query('ROLLBACK');res.status(400).json({error:'No se pudo cambiar la contraseña'});
+    }finally{client.release();}
+  });
 
   app.post('/api/auth/company-context',authMiddleware.bind(null,pool),async(req,res)=>{
     if(req.user.actor_type!=='platform'||!req.user.platform_membership_id)return res.status(403).json({error:'Solo un administrador de plataforma puede seleccionar empresa'});
@@ -424,6 +446,7 @@ function registerAuthRoutes(app,pool){
       vals.push(req.params.id);
       const r=companyActor?await client.query(`update users set ${fields.join(',')},updated_at=now() where id=$${vals.length} returning id`,vals):await client.query(`update users set ${fields.join(',')},updated_at=now() where id=$${vals.length} and ($${vals.length+1}=true or company_id=$${vals.length+2}) returning id`,[...vals,isAdmin||global,targetCompany]);
       if(!r.rowCount) throw new Error('No se pudo actualizar el usuario autorizado');
+      if(b.password||b.active===false)await client.query('delete from user_sessions where user_id=$1',[r.rows[0].id]);
       const after=await userAuditView(client,r.rows[0].id);
       if(!after) throw new Error('No se pudo obtener el usuario actualizado');
       const responseUser=await userView(client,r.rows[0].id);

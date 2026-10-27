@@ -8,9 +8,11 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {MIGRATION_FILES}=require('../startup');
 const {registerCoreRoutes}=require('../core-api');
+const {registerOperationsRoutes}=require('../operations-api');
 const {assertVehicleRoadReady,ROAD_CODES}=require('../vehicle-readiness');
 const {assertDriverOperationalReady}=require('../driver-readiness');
 const {assertTripResourcesReady}=require('../trip-eligibility');
+const {assertTripAvailability}=require('../trip-availability');
 const {reconcileVehicleDocumentAlerts}=require('../vehicle-document-alerts');
 const migration='032_fleet_operational_registration.sql';
 const source=file=>fs.readFileSync(path.join(__dirname,'..',file),'utf8');
@@ -44,6 +46,7 @@ test('flota operacional PostgreSQL aislado: migración, documentos y onboarding'
   for(const method of ['get','post','patch','put','delete'])app[method]=(route,...handlers)=>routes.push({method,route,handlers});
   // The real core registration owns the profile routes and legacy aliases too.
   registerCoreRoutes(app,pool);
+  registerOperationsRoutes(app,pool);
   assert.equal(routes.filter(r=>r.method==='post'&&r.route==='/api/trucks').length,1);
   async function run(method,route,user,{params={},body={},query:filters={}}={}){
    const r=routes.find(r=>r.method===method&&r.route===route);assert.ok(r,route);
@@ -112,6 +115,58 @@ test('flota operacional PostgreSQL aislado: migración, documentos y onboarding'
    assert.equal((await assertVehicleRoadReady(pool,{companyId:a.id,truckId:ready.id,lock:true})).allowed,true);
    await query("update vehicle_documents set status='Vencido' where truck_id=$1 and road_requirement_code='soap'",[ready.id]);
    await assert.rejects(assertVehicleRoadReady(pool,{companyId:a.id,truckId:ready.id}),e=>e.details.invalid_status.includes('soap'));
+  });
+
+  await t.test('bloqueos operacionales reales: mantención y checklist rechazado hasta resolución',async()=>{
+   const c=await company(),v=await truck(c.id,{complete:true});
+   await query("update trucks set status='Mantención' where id=$1",[v.id]);
+   await assert.rejects(assertVehicleRoadReady(pool,{companyId:c.id,truckId:v.id}),e=>e.code==='VEHICLE_NOT_ROAD_READY');
+   await query("update trucks set status='Disponible' where id=$1",[v.id]);
+   const m=await one("insert into maintenance(company_id,truck_id,item,status) values($1,$2,'Reparación fixture','En proceso') returning id",[c.id,v.id]);
+   await assert.rejects(assertVehicleRoadReady(pool,{companyId:c.id,truckId:v.id}),e=>e.details.reasons.some(r=>r.includes('mantención en proceso')));
+   await query("update maintenance set status='Completada' where id=$1",[m.id]);
+   const trip=await one("insert into trips(company_id,trip_number,truck_id,origin,destination) values($1,$2,$3,'Origen','Destino') returning id",[c.id,'CHECK-'+ ++serial,v.id]);
+   const checklist=await one("insert into vehicle_checklists(truck_id,trip_id,status) values($1,$2,'Rechazado') returning id",[v.id,trip.id]);
+   const alert=await one("insert into alerts(company_id,source_type,source_id,condition_code,resolved) values($1,'checklist',$2,'checklist_rejected',false) returning id",[c.id,checklist.id]);
+   await assert.rejects(assertVehicleRoadReady(pool,{companyId:c.id,truckId:v.id}),e=>e.details.reasons.some(r=>r.includes('checklist rechazado')));
+   await query('update alerts set resolved=true where id=$1',[alert.id]);
+   assert.equal((await assertVehicleRoadReady(pool,{companyId:c.id,truckId:v.id})).allowed,true);
+  });
+
+  await t.test('reservas SQL: intervalos, exclusión propia, camión/conductor, empresa y estados terminales',async()=>{
+   const c=await company(),other=await company(),v=await truck(c.id,{complete:true}),d=await candidate(c.id,{onboarded:true});
+   const trip=await one("insert into trips(company_id,trip_number,truck_id,driver_id,origin,destination,planned_departure,planned_arrival,status) values($1,$2,$3,$4,'Origen','Destino','2026-11-01T10:00:00Z','2026-11-01T18:00:00Z','Asignado') returning id",[c.id,'RES-'+ ++serial,v.id,d.d.id]);
+   const request={companyId:c.id,truckId:v.id,plannedDeparture:'2026-11-01T12:00:00Z',plannedArrival:'2026-11-01T19:00:00Z'};
+   await assert.rejects(assertTripAvailability(pool,request),e=>e.code==='TRIP_RESOURCE_CONFLICT'&&e.details.conflicts[0].truck);
+   await assert.rejects(assertTripAvailability(pool,{...request,truckId:null,driverId:d.d.id}),e=>e.details.conflicts[0].driver);
+   await assertTripAvailability(pool,{...request,tripId:trip.id});
+   await assertTripAvailability(pool,{...request,companyId:other.id});
+   await assertTripAvailability(pool,{...request,plannedDeparture:'2026-11-01T18:00:00Z',plannedArrival:'2026-11-01T23:00:00Z'});
+   await assert.rejects(assertTripAvailability(pool,{...request,plannedDeparture:null,plannedArrival:null}),e=>e.code==='TRIP_RESOURCE_CONFLICT');
+   await query("update trips set status='En tránsito',actual_departure=now() where id=$1",[trip.id]);
+   await assert.rejects(assertTripAvailability(pool,{...request,status:'En tránsito',plannedDeparture:'2026-11-02T18:00:00Z',plannedArrival:'2026-11-02T23:00:00Z'}),e=>e.code==='TRIP_RESOURCE_CONFLICT');
+   for(const status of ['Completado','Cancelado']){await query('update trips set status=$1 where id=$2',[status,trip.id]);await assertTripAvailability(pool,request);}
+  });
+
+  await t.test('flujo integrado real crea, rechaza reserva superpuesta, reasigna y activa sin conflicto consigo mismo',async()=>{
+   const c=await company(),v=await truck(c.id,{complete:true}),d=await candidate(c.id,{onboarded:true});
+   const client=await one("insert into clients(company_id,name) values($1,'Cliente fixture') returning id",[c.id]);
+   const actor={...c.actor,permissions:[...c.actor.permissions,'trips.manage']};
+   const body={truck_id:v.id,driver_id:d.d.id,client_id:client.id,origin:'Origen fixture',destination:'Destino fixture',planned_departure:'2026-11-01T10:00:00Z',planned_arrival:'2026-11-01T18:00:00Z'};
+   const first=await run('post','/api/trips',actor,{body});assert.equal(first.statusCode,201,JSON.stringify(first.payload));
+   const blocked=await run('post','/api/trips',actor,{body});assert.equal(blocked.statusCode,409,JSON.stringify(blocked.payload));assert.equal(blocked.payload.code,'TRIP_RESOURCE_CONFLICT');
+   assert.equal((await one('select count(*)::int n from trips where company_id=$1',[c.id])).n,1);
+   assert.equal((await one("select count(*)::int n from audit_logs where company_id=$1 and entity='trip' and action='create'",[c.id])).n,1);
+   const assign=await run('patch','/api/operations/trips/:id/assign',actor,{params:{id:first.payload.id},body:{truck_id:v.id,driver_id:d.d.id,client_id:client.id}});
+   assert.equal(assign.statusCode,200,JSON.stringify(assign.payload));assert.equal(assign.payload.status,'Asignado');
+   const activate=await run('patch','/api/trips/:id/status',actor,{params:{id:first.payload.id},body:{status:'En tránsito'}});
+   assert.equal(activate.statusCode,200,JSON.stringify(activate.payload));
+   await query("update trucks set status='Mantención' where id=$1",[v.id]);
+   const stop=await run('patch','/api/operations/trips/:id/status',actor,{params:{id:first.payload.id},body:{status:'Detenido'}});
+   assert.equal(stop.statusCode,200,JSON.stringify(stop.payload));
+   const resume=await run('patch','/api/operations/trips/:id/status',actor,{params:{id:first.payload.id},body:{status:'En tránsito'}});
+   assert.equal(resume.statusCode,409,JSON.stringify(resume.payload));
+   assert.equal((await one('select status from trips where id=$1',[first.payload.id])).status,'Detenido');
   });
 
   await t.test('renovación API actualiza canónicos sin duplicar documentos ni aceptar versión obsoleta',async()=>{

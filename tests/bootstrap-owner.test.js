@@ -19,7 +19,8 @@ test('bootstrap crea una identidad técnica con hash scrypt, membership y owners
 test('login expone cambio obligatorio y solo el endpoint autenticado cambia la contraseña',()=>{
   assert.match(auth,/u\.must_change_password/);
   assert.match(auth,/app\.post\('\/api\/auth\/change-password'/);
-  assert.match(auth,/reauthenticateUser\(pool,user\.id,current\)/);
+  assert.match(auth,/select password_hash from users where id=\$1 and active=true for update/);
+  assert.match(auth,/verifyPassword\(current,locked.password_hash\)/);
   assert.match(auth,/must_change_password=false/);
   assert.match(ui,/Auth\.user\.must_change_password/);
   assert.match(ui,/showChangePassword/);
