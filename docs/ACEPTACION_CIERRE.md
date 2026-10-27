@@ -29,4 +29,6 @@ PL42 y PL44 tienen implementación y pruebas locales; aceptación real según ca
 
 ## Verificación local de esta entrega
 
+La etapa transversal posterior dispone del recorrido y procedimientos en [ACEPTACION_INTEGRADA.md](ACEPTACION_INTEGRADA.md). Distingue la prueba integrada aislada de la concurrencia nativa aún pendiente; no reemplaza esta matriz ni convierte pendientes en aprobados.
+
 27-10-2026: suite completa con PGlite y Chrome habilitados: 1.329 pruebas aprobadas, 0 fallos, 0 omitidas. check:syntax y check:delivery correctos. SQL y migraciones se probaron en una base aislada en memoria; no se inició FleetChile ni se conectó a la base de producción. Chrome probó escritorio y ancho móvil de 390 px, escape de texto, confirmación y descarga sin contraseña en URL ni localStorage. No hubo commit, push, despliegue o migración de producción. Docker no está instalado; la modalidad privada permanece preparada pero no demostrada.
