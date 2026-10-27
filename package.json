@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test tests/*.test.js",
-    "check:syntax": "node scripts/check-syntax.js"
+    "check:syntax": "node scripts/check-syntax.js",
+    "check:delivery": "node scripts/check-delivery.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1118.0",

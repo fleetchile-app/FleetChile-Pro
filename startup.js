@@ -14,6 +14,7 @@ MIGRATION_FILES.push('037_driver_mobile_workflow.sql');
 MIGRATION_FILES.push('038_commercial_entitlements.sql');
 MIGRATION_FILES.push('039_company_branding.sql');
 MIGRATION_FILES.push('040_enterprise_administration.sql');
+MIGRATION_FILES.push('041_delivery_operations.sql');
 
 function timeoutMs(value,fallback){
   const parsed=Number(value);

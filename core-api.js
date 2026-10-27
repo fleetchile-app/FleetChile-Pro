@@ -40,7 +40,7 @@ function registerCoreRoutes(app,pool,{assertTripResourcesReady=defaultTripReadin
  }
  app.get('/api/core/summary',requirePermission('dashboard.read'),async(req,res)=>{
    const s=scoped(req);
-   const countSafe=async(name,sql,values)=>{try{return (await pool.query(sql,values)).rows[0]?.n||0}catch(e){console.warn(`Resumen: ${name} no disponible:`,e.message);return 0}};
+   const countSafe=async(name,sql,values)=>{try{return (await pool.query(sql,values)).rows[0]?.n||0}catch(e){console.warn('SUMMARY_COUNT_UNAVAILABLE');return 0}};
    const companies=await countSafe('empresas',isAdmin(req)?'select count(*)::int n from companies where active=true':'select count(*)::int n from companies where id=$1 and active=true',isAdmin(req)?[]:[companyId(req)]);
    const users=await countSafe('usuarios',`select count(*)::int n from users where active=true and (${s.sql})`,s.values);
    const clients=await countSafe('clientes',`select count(*)::int n from clients where active=true and (${s.sql})`,s.values);
@@ -49,7 +49,7 @@ function registerCoreRoutes(app,pool,{assertTripResourcesReady=defaultTripReadin
    try{const[v,d]=await Promise.all([
      pool.query(`select count(*)::int n from vehicle_documents vd join trucks t on t.id=vd.truck_id where not vd.road_requirement_superseded and vd.expires_at is not null and vd.expires_at <= current_date + interval '30 days' and (${scoped(req,'t').sql})`,scoped(req,'t').values),
      pool.query(`select count(*)::int n from driver_documents dd join drivers d on d.id=dd.driver_id where dd.expires_at is not null and dd.expires_at <= current_date + interval '30 days' and (${scoped(req,'d').sql})`,scoped(req,'d').values)
-   ]);vehicleDocuments=v.rows[0]?.n||0;driverDocuments=d.rows[0]?.n||0}catch(e){console.warn('Resumen: vencimientos no disponibles:',e.message)}
+   ]);vehicleDocuments=v.rows[0]?.n||0;driverDocuments=d.rows[0]?.n||0}catch(e){console.warn('SUMMARY_DOCUMENTS_UNAVAILABLE')}
    res.json({companies,users,clients,active_trips,vehicle_documents_due:vehicleDocuments,driver_documents_due:driverDocuments});
  });
  app.get('/api/companies',requirePlatformPermission('platform.companies.manage'),async(req,res)=>{try{res.json((await pool.query('select * from companies order by id desc')).rows)}catch(e){res.status(500).json({error:'No se pudieron consultar las empresas'})}});

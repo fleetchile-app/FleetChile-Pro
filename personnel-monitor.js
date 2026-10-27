@@ -43,7 +43,7 @@ async function reconcilePersonnelNotifications(pool,{now=new Date()}={}){
  return {scanned:conditions.length,created};
 }
 
-function startPersonnelMonitor(pool,{logger=console,intervalMs=DEFAULT_INTERVAL_MS}={}){
+function startPersonnelMonitor(pool,{logger=console,intervalMs=DEFAULT_INTERVAL_MS,onResult}={}){
  let stopped=false,active=false,timer=null,pending=null;
  const log=(method,message,error)=>{
   try{if(typeof logger?.[method]==='function')logger[method](message,error?{error: 'reconciliation_failed'}:undefined)}catch{}
@@ -53,8 +53,8 @@ function startPersonnelMonitor(pool,{logger=console,intervalMs=DEFAULT_INTERVAL_
   if(active)return pending;
   active=true;
   pending=(async()=>{
-   try{await reconcilePersonnelNotifications(pool)}
-   catch(error){log('error','Personnel notification reconciliation failed',error)}
+   try{await reconcilePersonnelNotifications(pool);try{onResult?.(true)}catch{}}
+   catch(error){log('error','Personnel notification reconciliation failed',error);try{onResult?.(false)}catch{}}
   })().finally(()=>{active=false;pending=null});
   return pending;
  };

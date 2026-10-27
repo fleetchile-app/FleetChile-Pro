@@ -47,9 +47,9 @@ async function reconcileVehicleDocumentAlerts(pool,{companyId}={}){
  }
  return {changed,resolved};
 }
-function startVehicleDocumentMonitor(pool,{intervalMs=60000,logger=console}={}){
+function startVehicleDocumentMonitor(pool,{intervalMs=60000,logger=console,onResult}={}){
  let stopped=false,pending=null;
- const run=()=>{if(stopped||pending)return pending;pending=reconcileVehicleDocumentAlerts(pool).catch(()=>logger.error('Vehicle document alert reconciliation failed')).finally(()=>{pending=null;});return pending;};
+ const run=()=>{if(stopped||pending)return pending;pending=reconcileVehicleDocumentAlerts(pool).then(()=>{try{onResult?.(true)}catch{}}).catch(()=>{logger.error('Vehicle document alert reconciliation failed');try{onResult?.(false)}catch{}}).finally(()=>{pending=null;});return pending;};
  const timer=setInterval(run,intervalMs);timer.unref?.();void run();
  return async()=>{stopped=true;clearInterval(timer);if(pending)await pending;};
 }
