@@ -5,7 +5,7 @@
  const contexts=new Map();
  const actionLabels={accept:'Aceptación',events:'Evento del recorrido',checklist:'Checklist',delivery:'Entrega'};
  const purposeLabels={pickup:'Recogida',delivery:'Entrega',mixed:'Recogida y entrega',rest:'Descanso',toll:'Peaje',weigh:'Pesaje',other:'Otra parada'};
- const checks=[['brakes','Frenos y dirección'],['tires','Neumáticos'],['lights','Luces y señalización'],['visibility','Espejos, vidrios y visibilidad'],['safety','Elementos de seguridad'],['documents','Documentación del vehículo']];
+ const checks=window.FleetChecklist?.controls||[['brakes','Frenos y dirección'],['tires','Neumáticos'],['lights','Luces y señalización'],['visibility','Espejos, vidrios y visibilidad'],['safety','Elementos de seguridad'],['documents','Documentación del vehículo']];
  async function request(path,body){
   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),20000);
   try{return await Auth.request(path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal}:{signal:controller.signal});}
@@ -109,11 +109,13 @@
   try{
    const ctx=contexts.get(String(id))||await request(base(id));if(!active(stamp)||!box.isConnected)return;contexts.set(String(id),ctx);
    const data=await request('/api/driver/trips/'+encodeURIComponent(id)+'/checklist');if(!active(stamp)||!box.isConnected)return;
-   const current=data.checklists?.[0];
-   if(current&&current.status!=='Pendiente'){box.innerHTML=`<h3>Checklist preoperacional</h3><p>${esc(current.status)}</p>${current.status==='Rechazado'?'<p class="driver-error">Falla notificada a operaciones. Este registro no autoriza la salida.</p>':''}<p>${esc(current.observations||'')}</p>`;return;}
+   const current=data.checklists?.[0],rules=window.FleetChecklist;if(!rules)throw Error('Actualiza la app para cargar el formulario de inspección. No se modificó ningún registro.');
+   const replacement=rules.canRegularize(current),closed=['Completado','Cancelado'].includes(ctx.status);
+   if(current&&current.status!=='Pendiente'&&(!replacement||closed)){box.innerHTML='<h3>Checklist preoperacional</h3>'+rules.summary(current)+(current.status==='Rechazado'?'<p class="driver-error">Falla notificada a operaciones. Este registro no autoriza la salida.</p>':'');return;}
+   if(closed){box.innerHTML='<h3>Checklist preoperacional</h3><p>El viaje está cerrado. No se registran inspecciones retroactivas.</p>';return;}
    const draftId='draft-checklist-'+id,saved=vault?await vault.get(draftId):null;
    if(!active(stamp)||!box.isConnected)return;
-   box.innerHTML=`<h3>Checklist preoperacional</h3><p>Revisa físicamente el vehículo. Una respuesta con falla lo cierra rechazado y genera alerta.</p><form class="driver-mobile-form">${checks.map(([key,label])=>`<label>${label}<select name="${key}" required><option value="">Seleccionar</option><option value="ok">Conforme</option><option value="fail">Con falla</option></select></label>`).join('')}<label>Observaciones<textarea name="observations" maxlength="2000"></textarea></label><p data-draft-status role="status"></p><button class="driver-button">Enviar checklist</button></form>`;
+   box.innerHTML=`<h3>Checklist preoperacional</h3>${replacement?rules.summary(current)+'<p>Realiza una inspección nueva. El registro anterior se conservará sin cambios.</p>':''}<p>Revisa físicamente el vehículo. Una respuesta con falla lo cierra rechazado y genera alerta.</p><form class="driver-mobile-form">${checks.map(([key,label])=>`<label>${label}<select name="${key}" required><option value="">Seleccionar</option><option value="ok">Conforme</option><option value="fail">Con falla</option></select></label>`).join('')}<label>Observaciones<textarea name="observations" maxlength="2000"></textarea></label>${replacement?'<label>Motivo de la nueva inspección<input name="reason" required minlength="5" maxlength="1000"></label>':''}<p data-draft-status role="status"></p><button class="driver-button">${replacement?'Registrar nueva inspección':'Enviar checklist'}</button></form>`;
    const form=box.querySelector('form'),status=form.querySelector('[data-draft-status]');
    if(saved?.values)for(const [k,v] of Object.entries(saved.values))if(form.elements[k])form.elements[k].value=v;
    const values=()=>Object.fromEntries(new FormData(form));
@@ -121,8 +123,11 @@
    form.onsubmit=async e=>{e.preventDefault();if(!active(stamp)||!box.isConnected)return;const b=values();form.querySelector('button').disabled=true;
     try{
      if(saved?.context&&(saved.context.version!==ctx.version||saved.context.resource_version!==ctx.resource_version))throw Error('El borrador pertenece a otra versión del viaje. Revisa nuevamente el vehículo con operaciones.');
-     await queue(id,'checklist',{client_key:crypto.randomUUID(),reported_at:new Date().toISOString(),items:checks.map(([key])=>({id:key,result:b[key]})),observations:b.observations});
-     await vault.remove(draftId);status.textContent='Enviado o pendiente de confirmación. Consulta Pendientes del teléfono; solo un resultado confirmado habilita la operación.';await renderOutbox();form.querySelectorAll('select,textarea').forEach(el=>el.disabled=true);
+     const items=checks.map(([key])=>({id:key,result:b[key]})),result=items.some(i=>i.result==='fail')?'Rechazado':'Aprobado';rules.validate({status:result,items,observations:b.observations});
+     const key=crypto.randomUUID();await queue(id,'checklist',{client_key:key,reported_at:new Date().toISOString(),items,observations:b.observations,...(replacement?{supersedes_id:current.id,reason:b.reason}:{})},key);
+     await vault.remove(draftId);if(!active(stamp)||!box.isConnected)return;
+     if(navigator.onLine!==false&&!await vault.get(key)){await checklist(id,box);return;}
+     status.textContent='Pendiente de confirmación. Consulta Pendientes del teléfono; no se presenta como aprobado.';await renderOutbox();form.querySelectorAll('select,textarea,input').forEach(el=>el.disabled=true);
     }catch(error){status.textContent=error.message;form.querySelector('button').disabled=false;}
    };
   }catch(e){if(active(stamp)&&box.isConnected)box.innerHTML=`<p class="driver-error">${esc(e.message)}</p>`;}

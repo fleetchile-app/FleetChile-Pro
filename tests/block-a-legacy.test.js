@@ -28,7 +28,7 @@ for(const failure of [null,'insert into alerts','insert into audit_logs'])test(`
  },release(){}};
  const routes=[],app={};for(const m of ['get','post','patch'])app[m]=(p,...h)=>routes.push({m,p,h});
  registerOperationsRoutes(app,{connect:async()=>db});
- const req={user:{id:1,role_code:'operations',company_id:10,permissions:['trips.manage']},params:{id:'7'},body:{truck_id:3,status:'Rechazado'}},res=response();
+ const req={user:{id:1,role_code:'operations',company_id:10,permissions:['trips.manage']},params:{id:'7'},body:{truck_id:3,status:'Rechazado',items:require('../public/checklist-shared').ids.map((id,i)=>({id,result:i?'ok':'fail'})),observations:'Freno con falla'}},res=response();
  await routes.find(r=>r.p==='/api/operations/trips/:id/checklist'&&r.m==='post').h.at(-1)(req,res);
  assert.equal(res.statusCode,failure?400:201);assert.equal(calls.at(-1),failure?'ROLLBACK':'COMMIT');
  if(failure)assert.equal(calls.includes('COMMIT'),false);

@@ -4,7 +4,8 @@ const {writeAudit}=require('./audit');
 const D=require('./itinerary-domain');
 const {terminal}=require('./trip-resources');
 const {currentPlan,loadState,recordItineraryEvent}=require('./itinerary-api');
-const CHECKS=['brakes','tires','lights','visibility','safety','documents'];
+const Checklist=require('./public/checklist-shared');
+const CHECKS=Checklist.ids;
 function versions(trip,b){
  if(!Number.isInteger(b.resource_version)||b.resource_version!==trip.resource_version||!Number.isInteger(b.version)||b.version!==trip.itinerary_version)throw D.fail('Cambió la asignación o el itinerario. Revisa el pendiente con operaciones.',409,'MOBILE_STALE');
 }
@@ -58,16 +59,17 @@ function registerDriverWorkflow(app,pool,{driverAccess,enforceDriverPersonnel}){
    let result={accepted:true,resource_version:trip.resource_version};
    if(action==='checklist'){
     if(!trip.truck_id)throw D.fail('El viaje no tiene camión asignado',409);
-    if(!Array.isArray(b.items)||b.items.length!==CHECKS.length||CHECKS.some(id=>b.items.filter(i=>i.id===id&&['ok','fail'].includes(i.result)).length!==1))throw D.fail('Responde todos los controles del checklist');
-    const status=b.items.some(i=>i.result==='fail')?'Rechazado':'Aprobado';
+    const canonical=Checklist.normalized(b.items),status=canonical.some(i=>i.result==='fail')?'Rechazado':'Aprobado';
+    const checked=Checklist.validate({items:canonical,status,observations:b.observations});
     const existing=(await db.query('select * from vehicle_checklists where trip_id=$1 and truck_id=$2 and driver_id=$3 order by id desc limit 1 for update',[trip.id,trip.truck_id,trip.driver_id])).rows[0];
-    if(existing&&existing.status!=='Pendiente')throw D.fail('El checklist ya está cerrado. Revisa su resultado con operaciones.',409);
-    const items=JSON.stringify(b.items.map(i=>({id:i.id,result:i.result}))),notes=typeof b.observations==='string'?b.observations.trim():'';
-    if(notes.length>2000)throw D.fail('Las observaciones superan el máximo de 2000 caracteres');
-    if(status==='Rechazado'&&!notes)throw D.fail('Describe la falla encontrada');
-    result=existing?(await db.query('update vehicle_checklists set status=$1,items=$2,observations=$3,completed_at=now() where id=$4 returning *',[status,items,notes||null,existing.id])).rows[0]:(await db.query("insert into vehicle_checklists(truck_id,driver_id,trip_id,checklist_type,status,items,observations,completed_at) values($1,$2,$3,'Preoperacional',$4,$5,$6,now()) returning *",[trip.truck_id,trip.driver_id,trip.id,status,items,notes||null])).rows[0];
+    const replacement=existing&&Checklist.canRegularize(existing);
+    if(existing&&existing.status!=='Pendiente'&&!replacement)throw D.fail('El checklist ya está cerrado. Revisa su resultado con operaciones.',409);
+    if(replacement&&(String(b.supersedes_id)!==String(existing.id)||typeof b.reason!=='string'||b.reason.trim().length<5||b.reason.length>1000))throw D.fail('Confirma el registro histórico y el motivo de la nueva inspección',409,'CHECKLIST_REGULARIZATION_REQUIRED');
+    if(!replacement&&b.supersedes_id!=null)throw D.fail('El registro anterior cambió. Recarga el checklist.',409);
+    const items=JSON.stringify(checked.items),notes=checked.observations;
+    result=existing&&!replacement?(await db.query('update vehicle_checklists set status=$1,items=$2,observations=$3,completed_at=now(),completed_by=$5,completed_by_name=$6 where id=$4 returning *',[status,items,notes,existing.id,req.user.id,req.user.name||null])).rows[0]:(await db.query("insert into vehicle_checklists(truck_id,driver_id,trip_id,checklist_type,status,items,observations,completed_at,created_by,created_by_name,completed_by,completed_by_name,supersedes_id) values($1,$2,$3,'Preoperacional',$4,$5,$6,now(),$7,$8,$7,$8,$9) returning *",[trip.truck_id,trip.driver_id,trip.id,status,items,notes,req.user.id,req.user.name||null,replacement?existing.id:null])).rows[0];
     if(status==='Rechazado')await db.query("insert into alerts(company_id,level,title,text,resolved,created_at,source_type,source_id,condition_code) values($1,'critical','Checklist rechazado',$2,false,now(),'checklist',$3,'checklist_rejected') on conflict (company_id,source_type,source_id,condition_code) where resolved=false and source_type is not null and source_id is not null and condition_code is not null do nothing",[trip.company_id,'Checklist rechazado para el viaje '+trip.id,result.id]);
-    await writeAudit(db,req,{companyId:trip.company_id,action:existing?'update':'create',entity:'vehicle_checklist',entityId:result.id,beforeData:existing,afterData:result});
+    await writeAudit(db,req,{companyId:trip.company_id,action:existing&&!replacement?'update':'create',entity:'vehicle_checklist',entityId:result.id,beforeData:existing,afterData:{...result,...(replacement?{regularization_reason:b.reason.trim()}:{} )}});
    }
    const receipt=(await db.query('insert into driver_mobile_actions(company_id,trip_id,actor_user_id,driver_id,resource_version,client_key,kind,payload_hash,result,reported_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id,confirmed_at',[trip.company_id,trip.id,req.user.id,trip.driver_id,trip.resource_version,key,action,hash,result,reported])).rows[0];
    await db.query('insert into trip_events(trip_id,event_type,notes,created_by,details) values($1,$2,$3,$4,$5)',[trip.id,action==='accept'?'Aceptación del conductor':'Checklist',action==='accept'?'Viaje aceptado por el conductor':'Checklist '+result.status,req.user.id,{mobile_action_id:receipt.id,reported_at:reported}]);

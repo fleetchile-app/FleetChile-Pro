@@ -685,7 +685,7 @@ test('loads legacy: conserva middleware de empresa y contexto transversal admin'
 test('eventos, checklist, cargas y POD escriben audit_logs antes de COMMIT',async()=>{
   const cases=[
     ['post','/api/operations/trips/:id/events',{event_type:'Control'},'trip_event'],
-    ['post','/api/operations/trips/:id/checklist',{truck_id:3,status:'Aprobado'},'vehicle_checklist'],
+    ['post','/api/operations/trips/:id/checklist',{truck_id:3,status:'Aprobado',items:require('../public/checklist-shared').ids.map(id=>({id,result:'ok'}))},'vehicle_checklist'],
     ['post','/api/operations/trips/:id/loads',{cargo:'Carga',client_id:8},'trip_load']
   ];
   for(const [method,routePath,body,entity] of cases){
