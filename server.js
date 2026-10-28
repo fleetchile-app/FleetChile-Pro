@@ -42,7 +42,7 @@ async function createLegacyLoad(req,res,pool){
  if(!['string','number'].includes(typeof client_id)||!Number.isSafeInteger(Number(client_id))||Number(client_id)<1)return res.status(400).json({error:"Selecciona un cliente registrado de tu empresa"});
  if(truck&&!await legacyTruckBelongs(pool,truck,req.resourceCompanyId))return res.status(403).json({error:"El camión no pertenece a la empresa de la carga"});
  const db=await pool.connect();
- try{await db.query('BEGIN');const selected=(await db.query('select id,name from clients where id=$1 and company_id=$2 and active=true for share',[client_id,req.resourceCompanyId])).rows[0];if(!selected){await db.query('ROLLBACK');return res.status(403).json({error:'Selecciona un cliente activo de tu empresa'})}const r=await db.query("insert into loads(company_id,client,guide,cargo,weight_kg,volume_m3,value_clp,truck,origin,destination,status) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *",[req.resourceCompanyId,selected.name,guide||null,cargo||null,weight_kg,volume_m3,value_clp,truck||null,origin||null,destination||null,status]);await writeAudit(db,req,{companyId:req.resourceCompanyId,action:'create',entity:'loads',entityId:r.rows[0].id,afterData:{...r.rows[0],client_id:selected.id}});await db.query('COMMIT');res.status(201).json(r.rows[0])}catch(e){await db.query('ROLLBACK');res.status(400).json({error:"No se pudo crear la carga"})}finally{db.release()}
+ try{await db.query('BEGIN');const selected=(await db.query('select id,name from clients where id=$1 and company_id=$2 and active=true for share',[client_id,req.resourceCompanyId])).rows[0];if(!selected){await db.query('ROLLBACK');return res.status(403).json({error:'Selecciona un cliente activo de tu empresa'})}const r=await db.query("insert into loads(company_id,client,guide,cargo,weight_kg,volume_m3,value_clp,truck,origin,destination,status) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *",[req.resourceCompanyId,selected.name,guide||null,cargo||null,weight_kg,volume_m3,value_clp,truck||null,origin||null,destination||null,status]);if(['origin_location_id','destination_location_id','road_route_id'].some(k=>req.body[k]!=null&&req.body[k]!==''))r.rows[0]=await require('./location-binding').bindLocations(db,'loads',r.rows[0],req.body,req.resourceCompanyId);await writeAudit(db,req,{companyId:req.resourceCompanyId,action:'create',entity:'loads',entityId:r.rows[0].id,afterData:{...r.rows[0],client_id:selected.id}});await db.query('COMMIT');res.status(201).json(r.rows[0])}catch(e){await db.query('ROLLBACK');res.status(400).json({error:"No se pudo crear la carga"})}finally{db.release()}
 }
 const parseLegacyCoordinate=value=>{
  if(typeof value!=='number'&&typeof value!=='string')return null;
@@ -84,9 +84,10 @@ registerOperationsStatus(app,pool,operations);
 registerCoreRoutes(app,pool);
 registerOperationsRoutes(app,pool);
 registerFleetRoutes(app,pool);
-registerGeographyRoutes(app,pool,createGeocoder());
-registerRoutingRoutes(app,pool,createRoutingAdapter());
-require('./itinerary-api').registerItineraryRoutes(app,pool,createRoutingAdapter());
+registerGeographyRoutes(app,pool,createGeocoder({pool}));
+require('./location-picker-api').registerLocationPickerRoutes(app,pool,createGeocoder({pool}),createRoutingAdapter({pool}));
+registerRoutingRoutes(app,pool,createRoutingAdapter({pool}));
+require('./itinerary-api').registerItineraryRoutes(app,pool,createRoutingAdapter({pool}));
 registerAdminRoutes(app,pool);
 registerEconomicsRoutes(app,pool);
 require('./finance-api').registerFinanceRoutes(app,pool);
@@ -113,6 +114,7 @@ app.post("/api/routes",requirePermission("trips.manage"),requireCreationCompany,
   const truck=truckId?(await client.query('select id,patente from trucks where id=$1 and company_id=$2 for share',[truckId,req.resourceCompanyId])).rows[0]:null;
   if(truckId&&!truck){await client.query('ROLLBACK');return res.status(403).json({error:'El camión no pertenece a la empresa de la ruta'})}
   const r=await client.query("insert into routes(company_id,truck_id,truck,origin,destination,distance_km,progress,status,eta) values($1,$2,$3,$4,$5,$6,0,'Planificada',$7) returning *",[req.resourceCompanyId,truck?.id||null,truck?.patente||null,String(b.origin).trim(),String(b.destination).trim(),distance,b.eta||null]);
+  if(['origin_location_id','destination_location_id','road_route_id'].some(k=>b[k]!=null&&b[k]!==''))r.rows[0]=await require('./location-binding').bindLocations(client,'routes',r.rows[0],b,req.resourceCompanyId);
   await writeAudit(client,req,{companyId:req.resourceCompanyId,action:'create',entity:'route',entityId:r.rows[0].id,afterData:r.rows[0]});
   await client.query('COMMIT');res.status(201).json(r.rows[0]);
  }catch(error){await client.query('ROLLBACK');res.status(400).json({error:'No se pudo crear la ruta'})}finally{client.release()}

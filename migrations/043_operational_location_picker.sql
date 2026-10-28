@@ -1,0 +1,20 @@
+-- Additive: never infer coordinates or rewrite historical journeys.
+BEGIN;
+ALTER TABLE operational_locations ADD COLUMN IF NOT EXISTS country_code TEXT NOT NULL DEFAULT 'CL' CHECK(country_code='CL');
+ALTER TABLE operational_locations ADD COLUMN IF NOT EXISTS commune_id BIGINT REFERENCES geo_communes(id) ON DELETE RESTRICT;
+ALTER TABLE operational_locations ADD COLUMN IF NOT EXISTS locality_id BIGINT REFERENCES geo_localities(id) ON DELETE RESTRICT;
+ALTER TABLE operational_locations ADD COLUMN IF NOT EXISTS access_notes TEXT;
+ALTER TABLE operational_locations ADD COLUMN IF NOT EXISTS client_id BIGINT REFERENCES clients(id) ON DELETE RESTRICT;
+ALTER TABLE operational_locations ADD COLUMN IF NOT EXISTS created_by BIGINT REFERENCES users(id) ON DELETE RESTRICT;
+ALTER TABLE road_routes ADD COLUMN IF NOT EXISTS snapped_points JSONB;
+ALTER TABLE routes ADD COLUMN IF NOT EXISTS origin_location_id BIGINT REFERENCES operational_locations(id) ON DELETE RESTRICT;
+ALTER TABLE routes ADD COLUMN IF NOT EXISTS destination_location_id BIGINT REFERENCES operational_locations(id) ON DELETE RESTRICT;
+ALTER TABLE routes ADD COLUMN IF NOT EXISTS road_route_id BIGINT REFERENCES road_routes(id) ON DELETE RESTRICT;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS origin_location_id BIGINT REFERENCES operational_locations(id) ON DELETE RESTRICT;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS destination_location_id BIGINT REFERENCES operational_locations(id) ON DELETE RESTRICT;
+ALTER TABLE trips ADD COLUMN IF NOT EXISTS road_route_id BIGINT REFERENCES road_routes(id) ON DELETE RESTRICT;
+ALTER TABLE loads ADD COLUMN IF NOT EXISTS origin_location_id BIGINT REFERENCES operational_locations(id) ON DELETE RESTRICT;
+ALTER TABLE loads ADD COLUMN IF NOT EXISTS destination_location_id BIGINT REFERENCES operational_locations(id) ON DELETE RESTRICT;
+ALTER TABLE trip_loads ADD COLUMN IF NOT EXISTS origin_location_id BIGINT REFERENCES operational_locations(id) ON DELETE RESTRICT;
+ALTER TABLE trip_loads ADD COLUMN IF NOT EXISTS destination_location_id BIGINT REFERENCES operational_locations(id) ON DELETE RESTRICT;
+COMMIT;

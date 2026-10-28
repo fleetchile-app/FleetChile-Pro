@@ -158,7 +158,7 @@ async function openRouteForm(){
    const data=Object.fromEntries(new FormData(event.target));
    if(data.truck_id&&!trucks.some(truck=>String(truck.id)===data.truck_id))return alert('Selecciona un camión de tu flota');
    saving=true;
-   try{await post('routes',{truck_id:data.truck_id?Number(data.truck_id):null,origin:data.origin,destination:data.destination,distance_km:data.distance_km===''?null:Number(data.distance_km)});close();render('routes')}catch(error){alert(error.message)}finally{saving=false}
+   try{await post('routes',{...data,truck_id:data.truck_id?Number(data.truck_id):null,origin:data.origin,destination:data.destination,distance_km:data.distance_km===''?null:Number(data.distance_km)});close();render('routes')}catch(error){alert(error.message)}finally{saving=false}
   };
  }catch(error){alert(error.message)}
 }

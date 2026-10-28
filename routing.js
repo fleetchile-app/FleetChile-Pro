@@ -33,13 +33,16 @@ function createOsrmRouter({fetchImpl=globalThis.fetch,baseUrl=process.env.ROUTIN
     try{payload=await response.json()}catch{throw new RoutingError('El proveedor devolvió una respuesta inválida','invalid_result')}
     if(payload?.code==='NoRoute'||!Array.isArray(payload?.routes)||payload.routes.length===0)return null;
     if(payload.code!=='Ok')throw new RoutingError('El proveedor devolvió una respuesta inválida','invalid_result');
-    return normalizeOsrmRoute(payload.routes[0],now);
+    const normalized=normalizeOsrmRoute(payload.routes[0],now);
+    if(normalized&&Array.isArray(payload.waypoints)&&payload.waypoints.length===2&&payload.waypoints.every(p=>Array.isArray(p.location)&&p.location.length===2&&validCoordinate(p.location[0],-180,180)&&validCoordinate(p.location[1],-90,90)&&Number.isFinite(p.distance)&&p.distance>=0))normalized.snapped_points=payload.waypoints.map(p=>({lng:p.location[0],lat:p.location[1],distance:p.distance}));
+    return normalized;
   }};
 }
 
 function createRoutingAdapter(options={}){
   const provider=(options.provider||process.env.ROUTING_PROVIDER||'osrm').toLowerCase();
   if(provider==='osrm')return createOsrmRouter(options);
+  if(provider==='openrouteservice')return require('./openrouteservice').createOrsRouter(options);
   throw new RoutingError(`Proveedor de ruteo no soportado: ${provider}`,'configuration_error');
 }
 

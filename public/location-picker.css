@@ -1,0 +1,18 @@
+.location-dialog{position:fixed;inset:0;background:#102c49aa;z-index:2500;display:flex;align-items:center;justify-content:center;padding:16px}
+.location-dialog[hidden]{display:none}
+.location-panel{background:#fff;color:#173b5d;border-radius:12px;padding:22px;width:min(960px,100%);max-height:94dvh;overflow:auto;box-shadow:0 16px 50px #071b3433}
+.location-panel *{box-sizing:border-box}
+.location-heading{display:flex;justify-content:space-between;align-items:center;gap:12px}.location-heading h2{margin:0}
+.location-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:12px 0}
+.location-panel label{display:flex;flex-direction:column;gap:5px;font-size:13px;font-weight:600;min-width:0}
+.location-panel input,.location-panel select,.location-panel textarea{width:100%;min-width:0;min-height:40px;border:1px solid #ccd9e6;border-radius:6px;padding:9px;background:white;color:#173b5d;font:inherit}
+.location-panel p,.location-panel small{font-size:13px;line-height:1.5}.location-panel small{font-weight:400}
+.location-map{height:320px;border:1px solid #ccd9e6;border-radius:8px;isolation:isolate}
+.location-pin{background:#0e6bad;border:3px solid white;border-radius:50%;box-shadow:0 1px 6px #102c4988}
+.location-route-box input[type=checkbox]{width:auto;min-height:0;margin-right:7px}
+.location-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+.location-error{color:#a12626;background:#fff2f2;border-radius:6px;padding:10px}.location-error:empty{display:none}
+.location-field-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}.location-field-actions button{font-size:12px;padding:7px 10px}
+.location-route-box{grid-column:1/-1;border:1px solid #dbe6f0;background:#f4f8fb;padding:12px;border-radius:8px;margin:8px 0}
+.location-route-map{height:230px}.location-results{display:grid;gap:6px;margin:8px 0;max-height:190px;overflow:auto}.location-results button{text-align:left;white-space:normal}
+@media(max-width:600px){.location-grid{grid-template-columns:1fr}.location-dialog{padding:6px}.location-panel{padding:14px;max-height:98dvh}.location-map{height:250px}.location-heading h2{font-size:20px}}

@@ -1,0 +1,12 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),crypto=require('node:crypto');
+const {embedded}=require('./helpers/acceptance'),{reserve}=require('../ors-budget');
+test('ORS presupuesto persistente SQL: límites compartidos, reinicio y fail-closed',{skip:!process.env.FLEETCHILE_TEST_PGLITE},async t=>{
+ const runtime=await embedded();try{const {pool}=runtime,apiKey='synthetic-'+crypto.randomUUID(),env={ORS_DIRECTIONS_DAILY_LIMIT:'2',ORS_DIRECTIONS_MINUTE_LIMIT:'2'};let row;
+  await t.test('sólo persiste huella, servicio y contadores; nunca la clave ni coordenadas',async()=>{await reserve(pool,apiKey,'directions',env);row=(await pool.query('select * from ors_request_budgets')).rows[0];assert.equal(row.requests_used,1);assert.equal(row.credential_hash.length,64);assert.ok(!JSON.stringify(row).includes(apiKey));});
+  await t.test('otra instancia usa el mismo presupuesto y la tercera consulta se bloquea',async()=>{await reserve({connect:pool.connect},apiKey,'directions',env);await assert.rejects(reserve(pool,apiKey,'directions',env),e=>e.code==='quota_exceeded');assert.equal((await pool.query('select requests_used from ors_request_budgets')).rows[0].requests_used,2);});
+  await t.test('servicios separados y deslizamiento de minuto sin reiniciar el día',async()=>{await reserve(pool,apiKey,'geocoding',{});await pool.query("update ors_request_budgets set minute_events=ARRAY[clock_timestamp()-interval '2 minutes'] where service='directions'");await assert.rejects(reserve(pool,apiKey,'directions',env),e=>e.code==='quota_exceeded');});
+  await t.test('ventana de 24 horas expirada se reinicia, no depende del reinicio de Node',async()=>{await pool.query("update ors_request_budgets set window_started_at=clock_timestamp()-interval '25 hours' where service='directions'");await reserve(pool,apiKey,'directions',env);assert.equal((await pool.query("select requests_used from ors_request_budgets where service='directions'")).rows[0].requests_used,1);});
+  await t.test('presupuesto de minuto usa ventana deslizante y rollback sin consumir',async()=>{const other=crypto.randomUUID(),e={ORS_DIRECTIONS_DAILY_LIMIT:'10',ORS_DIRECTIONS_MINUTE_LIMIT:'1'};await reserve(pool,other,'directions',e);await assert.rejects(reserve(pool,other,'directions',e),x=>x.code==='quota_exceeded');const hash=crypto.createHash('sha256').update(other).digest('hex');assert.equal((await pool.query('select requests_used from ors_request_budgets where credential_hash=$1',[hash])).rows[0].requests_used,1);});
+ }finally{await runtime.close();}
+});

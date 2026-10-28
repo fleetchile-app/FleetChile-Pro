@@ -22,13 +22,13 @@ function normalizeNominatim(item,now=()=>new Date()){
 
 function createNominatimGeocoder({fetchImpl=globalThis.fetch,baseUrl=process.env.GEOCODING_BASE_URL||'https://nominatim.openstreetmap.org',userAgent=process.env.GEOCODING_USER_AGENT,now}={}){
   if(typeof fetchImpl!=='function')throw new GeocodingError('No existe un cliente HTTP disponible','configuration_error');
-  return {async geocode(query){
+  async function search(query,limit){
     if(!userAgent)throw new GeocodingError('GEOCODING_USER_AGENT no está configurado','configuration_error');
     const url=new URL('/search',baseUrl);
     url.searchParams.set('q',query);
     url.searchParams.set('format','jsonv2');
     url.searchParams.set('addressdetails','1');
-    url.searchParams.set('limit','1');
+    url.searchParams.set('limit',String(limit));
     url.searchParams.set('countrycodes','cl');
     let response;
     try{response=await fetchImpl(url,{headers:{Accept:'application/json','User-Agent':userAgent},signal:AbortSignal.timeout(10000)})}catch(error){throw new GeocodingError(`No se pudo contactar al proveedor: ${error.message}`)}
@@ -36,13 +36,15 @@ function createNominatimGeocoder({fetchImpl=globalThis.fetch,baseUrl=process.env
     let payload;
     try{payload=await response.json()}catch{throw new GeocodingError('El proveedor devolvió una respuesta inválida','invalid_result')}
     if(!Array.isArray(payload))throw new GeocodingError('El proveedor devolvió una respuesta inválida','invalid_result');
-    return normalizeNominatim(payload[0],now);
-  }};
+    return payload.map(item=>normalizeNominatim(item,now)).filter(Boolean);
+  }
+  return {async geocode(query){return (await search(query,1))[0]||null;},async search(query){return search(query,5);}};
 }
 
 function createGeocoder(options={}){
   const provider=(options.provider||process.env.GEOCODING_PROVIDER||'nominatim').toLowerCase();
   if(provider==='nominatim')return createNominatimGeocoder(options);
+  if(provider==='openrouteservice')return require('./openrouteservice').createOrsGeocoder(options);
   throw new GeocodingError(`Proveedor de geocodificación no soportado: ${provider}`,'configuration_error');
 }
 

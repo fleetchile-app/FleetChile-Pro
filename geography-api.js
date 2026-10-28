@@ -1,6 +1,5 @@
 const {requirePermission,resolveActorContext}=require('./auth');
 const {writeAudit}=require('./audit');
-const {GeocodingError}=require('./geocoding');
 
 const clean=value=>typeof value==='string'?value.trim():'';
 const actorContext=req=>resolveActorContext(req);
@@ -17,7 +16,8 @@ const companyId=req=>{
 const validCoordinates=result=>Number.isFinite(result?.lat)&&result.lat>=-90&&result.lat<=90&&Number.isFinite(result?.lng)&&result.lng>=-180&&result.lng<=180;
 
 function geocodingFailure(res,error){
-  if(error instanceof GeocodingError&&error.code==='configuration_error')return res.status(503).json({error:'El servicio de geocodificación no está configurado'});
+  if(error.code==='quota_exceeded')return res.status(429).json({error:'Cuota de búsqueda alcanzada. Reintenta más tarde.'});
+  if(error.code==='configuration_error')return res.status(503).json({error:'El servicio de geocodificación no está configurado'});
   return res.status(502).json({error:'No se pudo geocodificar la ubicación'});
 }
 

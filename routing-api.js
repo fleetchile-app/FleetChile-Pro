@@ -1,6 +1,5 @@
 const {requirePermission}=require('./auth');
 const {writeAudit}=require('./audit');
-const {RoutingError}=require('./routing');
 
 const isAdmin=req=>req.user?.role_code==='admin';
 const companyId=req=>isAdmin(req)?(req.body?.company_id||null):(req.user?.company_id||null);
@@ -10,7 +9,8 @@ const validCoordinates=location=>coordinate(location?.lat,-90,90)&&coordinate(lo
 const validRoute=result=>Number.isFinite(result?.distance_meters)&&result.distance_meters>=0&&Number.isFinite(result?.duration_seconds)&&result.duration_seconds>=0&&result.geometry?.type==='LineString'&&Array.isArray(result.geometry.coordinates)&&result.geometry.coordinates.length>=2&&typeof result.provider==='string'&&result.provider.trim()&&typeof result.calculated_at==='string'&&!Number.isNaN(Date.parse(result.calculated_at));
 
 function routingFailure(res,error){
-  if(error instanceof RoutingError&&error.code==='configuration_error')return res.status(503).json({error:'El servicio de ruteo no está configurado'});
+  if(error.code==='quota_exceeded')return res.status(429).json({error:'Cuota de ruteo alcanzada. Reintenta más tarde.'});
+  if(error.code==='configuration_error')return res.status(503).json({error:'El servicio de ruteo no está configurado'});
   return res.status(502).json({error:'No se pudo calcular la ruta'});
 }
 

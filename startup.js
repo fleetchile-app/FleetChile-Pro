@@ -16,6 +16,9 @@ MIGRATION_FILES.push('039_company_branding.sql');
 MIGRATION_FILES.push('040_enterprise_administration.sql');
 MIGRATION_FILES.push('041_delivery_operations.sql');
 MIGRATION_FILES.push('042_checklist_completion.sql');
+MIGRATION_FILES.push('043_operational_location_picker.sql');
+MIGRATION_FILES.push('044_seed_ine_localities_2024.sql');
+MIGRATION_FILES.push('045_ors_request_budget.sql');
 
 function timeoutMs(value,fallback){
   const parsed=Number(value);

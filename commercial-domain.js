@@ -38,6 +38,7 @@ function quote(b,p,current,now=new Date()){
 function state(contract,now=new Date()){if(!contract)return 'unconfigured';if(now<new Date(contract.period_from))return 'scheduled';if(now>=new Date(contract.period_until))return 'expired';return 'active';}
 function moduleFor(path){
  path=path.toLowerCase().replace(/\/+$/,'');
+ if(/\/api\/location-picker(?:\/|$)/.test(path))return 'operations';
  if(/\/api\/(?:fleet\/)?trucks\/\d+\/(?:positions?|track|history|location)$/.test(path)||/\/api\/fleet\/positions$/.test(path)||/\/api\/driver\/trips\/\d+\/positions$/.test(path))return 'gps';
  if(/(?:\/maintenance|\/work-orders|\/maintenance-routines)/.test(path))return 'maintenance';
  if(/\/fuel(?:\/|$)/.test(path))return 'fuel';
