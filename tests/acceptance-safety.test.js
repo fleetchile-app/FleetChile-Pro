@@ -8,4 +8,7 @@ test('aceptación nativa rechaza producción, hosts remotos y ausencia de confir
 });
 test('comandos de aceptación fallan ante prerrequisitos ausentes en lugar de omitir pruebas',()=>{
  const {prepare}=require('../scripts/run-acceptance');assert.throws(()=>prepare({}));assert.throws(()=>prepare({FLEETCHILE_TEST_PGLITE:'nonexistent-acceptance-runtime'}));assert.throws(()=>prepare({},{native:true}));
+ assert.throws(()=>prepare({FLEETCHILE_TEST_PGLITE:require.resolve('../auth')},{extended:true}),/PLAYWRIGHT/);
+ assert.throws(()=>prepare({FLEETCHILE_TEST_PGLITE:require.resolve('../auth'),FLEETCHILE_TEST_PLAYWRIGHT:'nonexistent-browser-runtime'},{extended:true}),/navegador/);
+ const files=prepare({FLEETCHILE_TEST_PGLITE:require.resolve('../auth'),FLEETCHILE_TEST_PLAYWRIGHT:require.resolve('../auth')},{extended:true});assert.ok(files.includes('tests/driver-recovery-browser.test.js'));assert.ok(files.includes('tests/commercial-postgres.integration.test.js'));
 });

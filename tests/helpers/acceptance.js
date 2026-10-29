@@ -13,6 +13,7 @@ async function harness(pool){
  require('../../core-api').registerCoreRoutes(app,pool);await require('../../fleet-api').registerFleetRoutes(app,pool);require('../../operations-api').registerOperationsRoutes(app,pool,{storage});
  require('../../personnel-api').registerPersonnelRoutes(app,pool,{resolveActorContext:auth.resolveActorContext,hashPassword,reauthenticateUser:auth.reauthenticateUser});
  require('../../economics-api').registerEconomicsRoutes(app,pool);require('../../finance-api').registerFinanceRoutes(app,pool);require('../../commercial-api').registerCommercialRoutes(app,pool);
+ require('../../enterprise-api').registerEnterpriseRoutes(app,pool);
  require('../../itinerary-api').registerItineraryRoutes(app,pool,{async route(a,b){return {distance_meters:1000,duration_seconds:600,provider:'synthetic-acceptance-not-real-routing',calculated_at:new Date().toISOString(),geometry:{type:'LineString',coordinates:[[a.lng,a.lat],[b.lng,b.lat]]}};}});
  const middleware=auth.authMiddleware.bind(null,pool),commercial=require('../../commercial-gate').commercialGate(pool);
  async function session(userId){const token=crypto.randomBytes(32).toString('hex');await pool.query("insert into user_sessions(user_id,token_hash,expires_at) values($1,$2,now()+interval '1 hour')",[userId,crypto.createHash('sha256').update(token).digest('hex')]);return token;}
@@ -23,9 +24,9 @@ async function harness(pool){
   return {id:Number(u.id),token:await session(u.id)};
  }
  async function company(name){const c=await one('insert into companies(legal_name,user_limit) values($1,25) returning id',[name]);return {id:Number(c.id),admin:await account(c.id,'company_admin',name+' admin'),approver:await account(c.id,'company_admin',name+' approver','22222222-2')};}
- async function run(token,method,url,{body={},params={},query={}}={}){
+ async function run(token,method,url,{body={},params={},query={},headers={}}={}){
   const matching=routes.filter(r=>r.method===method&&r.url===url);assert.ok(matching.length,method+' '+url);
-  const actual=url.replace(/:([A-Za-z]+)/g,(_,key)=>String(params[key]??'')),req={method:method.toUpperCase(),originalUrl:actual,path:actual,body,params,query,ip:'127.0.0.1',get:key=>key.toLowerCase()==='authorization'&&token?'Bearer '+token:''};
+  const actual=url.replace(/:([A-Za-z]+)/g,(_,key)=>String(params[key]??'')),req={method:method.toUpperCase(),originalUrl:actual,path:actual,body,params,query,ip:'127.0.0.1',get:key=>key.toLowerCase()==='authorization'&&token?'Bearer '+token:headers[key.toLowerCase()]||''};
   const res={statusCode:200,headers:{},status(n){this.statusCode=n;return this},json(v){this.payload=v;return this},send(v){this.payload=v;return this},sendStatus(n){this.statusCode=n;return this},set(k,v){this.headers[k]=v;return this},type(v){this.headers.type=v;return this}};
   const handlers=[middleware,commercial,...matching.flatMap(r=>r.handlers)];async function next(i){if(i>=handlers.length)return;let work;await handlers[i](req,res,()=>work=next(i+1));if(work)await work;}await next(0);return res;
  }

@@ -68,11 +68,33 @@ test('aceptación integrada: sesiones, prepago, tres entregas, incidentes, talle
    const signature='iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAGklEQVQ4jWP4TyFgGDXg/2gY/B8Ng//DIgwAXXj8LuMlDaEAAAAASUVORK5CYII=';
    for(let i=0;i<3;i++){
     await event('arrive','s'+(i+1));const body={...ctx,load_id:Number(loads[i].id),client_submission_id:'pod-acceptance-'+i,recipient_name:'Receptor sintético',signature};
+    body.photo=signature;
+    if(i===0){
+     const put=h.storage.put;h.storage.put=async args=>{if(args.key.includes('/photo/'))throw Error('synthetic photo storage failure');return put(args);};
+     try{const failed=await call(driver.token,'post','/api/driver/trips/:id/deliveries',body,{id:trip.id});assert.equal(failed.statusCode,400);assert.equal(h.objects.size,0);assert.equal((await h.one('select count(*)::int n from trip_delivery_proofs where trip_id=$1',[trip.id])).n,0);}
+     finally{h.storage.put=put;}
+    }
     await ok(driver.token,'post','/api/driver/trips/:id/deliveries',body,{id:trip.id},201);await ok(driver.token,'post','/api/driver/trips/:id/deliveries',body,{id:trip.id},200);
     assert.equal((await h.one("select count(*)::int n from trip_loads where trip_id=$1 and status='Entregada'",[trip.id])).n,i+1);await event('depart','s'+(i+1));
    }
-   await admin('patch','/api/operations/trips/:id/status',{status:'Completado'},{id:trip.id});assert.equal((await h.one('select count(*)::int n from trip_delivery_proofs where trip_id=$1',[trip.id])).n,3);assert.equal(h.objects.size,3);
+   await admin('patch','/api/operations/trips/:id/status',{status:'Completado'},{id:trip.id});assert.equal((await h.one('select count(*)::int n from trip_delivery_proofs where trip_id=$1',[trip.id])).n,3);assert.equal(h.objects.size,6);
    const foreign=await call(b.admin.token,'get','/api/operations/trips/:id',{}, {id:trip.id});assert.equal(foreign.statusCode,404);
+  });
+  await t.test('administración consulta firma/foto privadas verificadas; otra empresa no descarga ni conoce claves',async()=>{
+   const POD='/api/operations/trips/:id/pod',data=await admin('get',POD,{}, {id:trip.id});
+   assert.equal(data.proofs.length,3);assert.doesNotMatch(JSON.stringify(data),/storage_key|companies\//);
+   for(const proof of data.proofs){
+    assert.deepEqual(proof.files.map(f=>f.type).sort(),['photo','signature']);
+    for(const file of proof.files){
+     const params={id:trip.id,proofId:proof.id,fileId:file.id},path=POD+'/:proofId/files/:fileId';
+     const r=await call(a.admin.token,'get',path,{},params);assert.equal(r.statusCode,200,JSON.stringify(r.payload));assert.ok(Buffer.isBuffer(r.payload));assert.match(r.headers['Cache-Control'],/no-store/);
+     const stored=await h.one('select storage_key,sha256 from delivery_proof_files where id=$1',[file.id]);assert.deepEqual(r.payload,h.objects.get(stored.storage_key));assert.equal(require('node:crypto').createHash('sha256').update(r.payload).digest('hex'),stored.sha256);
+     assert.equal((await call(b.admin.token,'get',path,{},params)).statusCode,404);
+    }
+   }
+   const file=data.proofs[0].files[0],stored=await h.one('select storage_key from delivery_proof_files where id=$1',[file.id]),original=h.objects.get(stored.storage_key);
+   h.objects.set(stored.storage_key,Buffer.alloc(original.length));
+   assert.equal((await call(a.admin.token,'get',POD+'/:proofId/files/:fileId',{}, {id:trip.id,proofId:data.proofs[0].id,fileId:file.id})).statusCode,503);h.objects.set(stored.storage_key,original);
   });
   await t.test('equipo entra a taller después del viaje; liberación técnica no espera factura',async()=>{
    const now=Date.now();order=await admin('post',MW,{mode:'receive',truck_id:Number(vehicle.id),reason:'Revisión sintética después del viaje',maintenance_type:'Correctiva',received_at:new Date(now-60000).toISOString(),odometer_km:100},{},201);
@@ -86,7 +108,16 @@ test('aceptación integrada: sesiones, prepago, tres entregas, incidentes, talle
   await t.test('ingreso/costo aprobado/conciliado, reporte y cierre conservan autoría y totales',async()=>{
    const revenue=await admin('patch','/api/economics/trips/:id/revenue',{revenue_clp:10000,revenue_includes_vat:true,reason:'Ingreso sintético pactado'},{id:trip.id},202);
    await ok(a.approver.token,'post','/api/economics/authorizations/:id/approve',{reason:'Aprobar ingreso posterior al inicio',password:h.password},{id:revenue.request.id});
-   const cost=await admin('post','/api/economics/trips/:id/costs',{amount_clp:2000,amount_includes_vat:true,cost_basis:'observed',category_code:'toll',support_status:'undocumented',justification:'Gasto de prueba, no real'},{id:trip.id},201);
+   let initial=await admin('get',FIN,{}, {id:trip.id});
+   await admin('post',FIN+'/budget',{version:Number(initial.control.version),reason:'Presupuesto de combustible sintético',entries:[{category_code:'fuel',amount_clp:1800,includes_vat:true}]},{id:trip.id},201);
+   const fuels=[];
+   for(const [date,odo] of [['2026-10-27',10000],['2026-10-28',10500]])fuels.push(await admin('post','/api/fleet/fuel',{truck_id:Number(vehicle.id),date,liters:100,price_clp:20,odometer_km:odo,station:'Estación sintética'},{},201));
+   const history=await call(a.admin.token,'get','/api/fleet/fuel',{}, {},{truck_id:String(vehicle.id),include_summary:'true'});assert.equal(history.statusCode,200);assert.equal(history.payload.records[0].efficiency_km_l,5);assert.equal(history.payload.records[0].cost_per_km,4);assert.equal(history.payload.records[1].efficiency_km_l,null);
+   const source=await admin('post','/api/economics/sources',{kind:'fuel',fuel_id:Number(fuels[1].id),includes_vat:true,description:'Origen sintético enlazado al registro'},{},201);
+   assert.equal((await call(a.admin.token,'post','/api/economics/sources',{kind:'fuel',fuel_id:Number(fuels[1].id),includes_vat:true,description:'No duplicar'})).statusCode,409);
+   initial=await admin('get',FIN,{}, {id:trip.id});
+   const allocation=await admin('post','/api/economics/sources/:sourceId/allocate',{trip_id:Number(trip.id),version:Number(initial.control.version),source_version:0,amount_clp:2000,reason:'Combustible consumido por este servicio'},{sourceId:source.id},201);
+   const item=await h.one('select id item_id,current_version_id version_id from trip_cost_items where id=$1',[allocation.cost_item_id]),cost=item;
    const request=await admin('post','/api/economics/authorizations',{trip_id:Number(trip.id),request_type:'cost_version',cost_version_id:Number(cost.version_id||cost.id),reason:'Revisión del gasto sintético'},{},201);
    await ok(a.approver.token,'post','/api/economics/authorizations/:id/approve',{reason:'Aprobación independiente sintética',password:h.password},{id:request.id});
    await admin('post','/api/economics/costs/:id/reconcile',{reason:'Conciliación sintética'},{id:cost.item_id},201);
@@ -97,6 +128,11 @@ test('aceptación integrada: sesiones, prepago, tres entregas, incidentes, talle
    await admin('post',FIN+'/distribution',{version:Number(state.control.version),basis_hash:state.basis_hash,entries:loads.map((l,i)=>({load_id:Number(l.id),revenue_clp:i?3000:4000,cost_clp:i?600:800})),reason:'Reparto sintético entre tres clientes'},{id:trip.id},201);
    state=await admin('get',FIN,{}, {id:trip.id});await admin('post',FIN+'/close',{version:Number(state.control.version),reason:'Cierre integral de aceptación',password:h.password},{id:trip.id});state=await admin('get',FIN,{}, {id:trip.id});assert.equal(state.control.state,'closed');assert.equal((await h.one('select status from trips where id=$1',[trip.id])).status,'Completado');
    const audit=await h.one("select count(*)::int n from audit_logs where company_id=$1 and user_id in ($2,$3)",[a.id,a.admin.id,a.approver.id]);assert.ok(audit.n>15);
+   assert.equal(state.comparison.find(x=>x.category_code==='fuel').variance_clp,200);
+   await admin('post',FIN+'/reopen',{version:Number(state.control.version),reason:'Revisión posterior sintética trazable',password:h.password},{id:trip.id});
+   state=await admin('get',FIN,{}, {id:trip.id});assert.equal(state.control.state,'open');assert.equal(state.summary.delta_clp,8000);assert.equal(state.events.length,2);
+   await admin('post',FIN+'/close',{version:Number(state.control.version),reason:'Segundo cierre sin cambiar importes',password:h.password},{id:trip.id});
+   assert.equal((await admin('get',FIN,{}, {id:trip.id})).events.length,3);
   });
  }finally{await runtime.close();}
 });

@@ -8,6 +8,7 @@
     "check:syntax": "node scripts/check-syntax.js",
     "check:delivery": "node scripts/check-delivery.js",
     "test:acceptance": "node scripts/run-acceptance.js",
+    "test:closure": "node scripts/run-acceptance.js --extended",
     "test:concurrency": "node scripts/run-acceptance.js --postgres"
   },
   "dependencies": {
