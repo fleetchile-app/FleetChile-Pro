@@ -16,6 +16,7 @@ aside .brand small{color:var(--fc-sidebar-muted)!important;font-size:7px!importa
 #nav button i{width:18px!important;height:18px!important;min-width:18px!important;display:grid!important;place-items:center!important;margin:0!important;font-style:normal!important;font-size:14px!important;line-height:1!important;color:#8eabc7!important;opacity:1!important;filter:none!important}
 #nav button i svg{width:16px!important;height:16px!important;display:block!important;fill:none!important;stroke:currentColor!important;stroke-width:1.8!important;stroke-linecap:round!important;stroke-linejoin:round!important}
 #nav button span{flex:1!important;line-height:1!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+#nav button[data-v="documents"] span{white-space:normal!important;line-height:1.2!important}
 #nav button:hover{background:var(--fc-sidebar-2)!important;color:#fff!important;border:0!important}
 #nav button:hover i{color:#b8d9f3!important}
 #nav button.active{background:var(--fc-sidebar-active)!important;color:#fff!important;border:0!important;box-shadow:none!important}

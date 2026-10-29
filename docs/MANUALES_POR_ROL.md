@@ -12,6 +12,14 @@ Exportar datos prepara un paquete privado de su propia empresa y requiere contra
 
 ## Operaciones
 
+La sección **Documentos y vencimientos** centraliza documentos de vehículos y
+conductores; no emite guías tributarias. **Rutas** ya no es un paso separado del
+menú: el recorrido se planifica dentro de **Viajes → detalle → Resumen → Itinerario,
+cargas y tiempos**. El bloque desplegable **Recorridos guardados (opcional)**
+permite buscar o guardar un par origen/destino de la empresa. Reutilizarlo sólo
+prepara un borrador; no asigna recursos ni activa el servicio. Se conservan las
+paradas intermedias y se recalculan los tramos al guardar la nueva versión.
+
 Crear cliente → vehículo/equipo y documentación → conductor elegible ya registrado como persona → composición cuando corresponda → carga del cliente propio → viaje/itinerario → asignación y validación. La capacidad corresponde al conjunto y se evalúa por tramo. Una planificación incompleta no autoriza iniciar. Confirmar restricciones de ruta no verificables por proveedor; distancia y ETA no se inventan si falla ruteo.
 
 Registrar paradas, recogidas y entregas por carga; no completar todo un viaje por resolver una entrega. Reemplazos y cambios deben conservar autor, motivo y versiones anteriores. Consultar ficha GPS/viaje; una posición antigua no es ubicación actual garantizada. No prometer seguimiento con pantalla bloqueada en la PWA.

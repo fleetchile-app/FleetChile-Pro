@@ -106,6 +106,7 @@ async function recordItineraryEvent(db,req,locked,b,{pickups=false}={}){
 }
 function registerItineraryRoutes(app,pool,router){
  const route=(method,path,permission,work)=>app[method](path,requirePermission(permission),async(req,res)=>{try{const cid=company(req),trip=(await pool.query('select * from trips where id=$1 and company_id=$2',[E.id(req.params.id,'Viaje'),cid])).rows[0];if(!trip)return res.sendStatus(404);await work(req,res,trip);}catch(e){res.status(e.status||500).json({error:e.status?e.message:'No se pudo procesar el itinerario',code:e.code||'ITINERARY_ERROR'});}});
+ require('./saved-routes-api').registerSavedRoutes(pool,route);
  route('get',BASE+'/options','trips.manage',async(req,res,trip)=>{
   const [locations,loads]=await Promise.all([pool.query('select id,name,address,lat,lng from operational_locations where company_id=$1 order by name,id',[trip.company_id]),pool.query('select l.*,c.name client_name from trip_loads l join clients c on c.id=l.client_id and c.company_id=$2 where l.trip_id=$1 order by l.id',[trip.id,trip.company_id])]);
   res.json({locations:locations.rows,loads:loads.rows,vehicle:await vehicleState(pool,trip)});
@@ -157,7 +158,7 @@ function registerItineraryRoutes(app,pool,router){
    await assertTripResourcesReady(db,{companyId:locked.company_id,truckId:locked.truck_id,trailerId:locked.trailer_id,driverId:locked.driver_id,tripId:locked.id,status:locked.status,plannedDeparture:plan.departure,plannedArrival:plan.arrival,compositionSnapshot:locked.composition_snapshot});
    if(JSON.stringify(vehicle)!==JSON.stringify(await vehicleState(db,locked)))throw D.fail('La capacidad del vehículo cambió durante el cálculo; recarga el itinerario',409);
    const next=(await db.query('insert into trip_itinerary_revisions(company_id,trip_id,version,resource_version,plan,reason,actor_user_id,actor_name) values($1,$2,$3,$4,$5,$6,$7,$8) returning *',[trip.company_id,trip.id,version+1,resourceVersion,plan,reason,req.user.id,req.user.name||'Usuario autenticado'])).rows[0];
-   await db.query('update trips set itinerary_version=$1,planned_departure=$2,planned_arrival=$3,distance_km=$4,updated_at=now() where id=$5 and company_id=$6',[version+1,plan.departure,plan.arrival,plan.distance_meters/1000,trip.id,trip.company_id]);
+   await db.query('update trips set itinerary_version=$1,planned_departure=$2,planned_arrival=$3,distance_km=$4,origin=$7,destination=$8,origin_location_id=$9,destination_location_id=$10,updated_at=now() where id=$5 and company_id=$6',[version+1,plan.departure,plan.arrival,plan.distance_meters/1000,trip.id,trip.company_id,plan.stops[0].location.name,plan.stops.at(-1).location.name,plan.stops[0].location_id,plan.stops.at(-1).location_id]);
    await db.query('insert into trip_events(trip_id,event_type,notes,created_by,details) values($1,$2,$3,$4,$5)',[trip.id,'Itinerario',reason,req.user.id,{version:version+1,previous_version:version,arrival:plan.arrival}]);
    await writeAudit(db,req,{companyId:trip.company_id,action:'update',entity:'trip_itinerary',entityId:trip.id,beforeData:old,afterData:next});
    await db.query('COMMIT');res.json(next);

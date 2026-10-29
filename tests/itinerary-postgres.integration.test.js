@@ -78,6 +78,7 @@ test('PL16–PL24 PostgreSQL aislado: itinerarios, capacidad, tiempos y excepcio
    assert.deepEqual(p.capacity.segments.map(s=>s.weight_kg),[10000,6000,3000]);
    const state=await run(f,'get',IT,{}, {id:f.trip.id});assert.equal(state.statusCode,200);assert.equal(state.payload.progress.length,4);assert.equal(state.payload.eta.state,'stale_gps');
    const stored=await one('select * from trips where id=$1',[f.trip.id]);assert.equal(Number(stored.distance_km),3);assert.equal(stored.itinerary_version,1);
+   assert.equal(stored.origin,f.locations[0].name);assert.equal(stored.destination,f.locations.at(-1).name);assert.equal(Number(stored.origin_location_id),Number(f.locations[0].id));assert.equal(Number(stored.destination_location_id),Number(f.locations.at(-1).id));
    assert.equal((await one('select count(*)::int n from trip_delivery_proofs where trip_id=$1',[f.trip.id])).n,0);
    await assert.rejects(query('update trips set planned_arrival=planned_arrival+interval \'1 hour\' where id=$1',[f.trip.id]),/itinerario auditado/i);
    await assert.rejects(query("update trip_itinerary_revisions set reason='No permitido' where trip_id=$1",[f.trip.id]),/inmutables/);

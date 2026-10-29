@@ -28,9 +28,40 @@
    stops.forEach((s,i)=>{for(const f of ['location_id','purpose','service_minutes','wait_minutes','rest_minutes'])s[f]=b['s'+i+'_'+f];});
    draft.loads=opts.loads.map(l=>({load_id:Number(l.id),pickup:b['l'+l.id+'_pickup'],delivery:b['l'+l.id+'_delivery']}));
   };
+  let savedRows=[],savedPage=1,savedQuery='',savedSequence=0;
+  const error=e=>{if(identity()===token&&form?.isConnected){const box=form.querySelector('#it-error');box.hidden=false;box.textContent=e.message;}};
+  async function browse(page=1){
+   capture();const target=form.querySelector('#it-saved-routes'),sequence=++savedSequence,owner=form;
+   target.innerHTML='<p role="status">Consultando recorridos guardados…</p>';
+   try{
+    const result=await api(id,'/saved-routes?page='+page+'&q='+encodeURIComponent(savedQuery));
+    if(identity()!==token||form!==owner||!target.isConnected||sequence!==savedSequence)return;
+    savedRows=result.rows;savedPage=result.page;
+    target.innerHTML=`<p>${Number(result.total)} recorridos · Página ${Number(result.page)}</p>${result.rows.map(r=>`<div class="it-stop"><strong>${esc(r.origin)} → ${esc(r.destination)}</strong><small>${r.can_use?'Reutiliza sólo origen y destino. Los tramos y tiempos se calculan al guardar el viaje.':'Registro histórico sin accesos confirmados. Selecciona sus ubicaciones manualmente en el planificador.'}</small><button type="button" class="secondary" data-it-use="${Number(r.id)}" ${r.can_use?'':'disabled'}>Usar origen y destino</button></div>`).join('')||'<p>No hay recorridos guardados para esta búsqueda.</p>'}<div class="it-actions">${page>1?'<button type="button" class="secondary" data-it-saved-page="'+(page-1)+'">Anterior</button>':''}${page*result.page_size<result.total?'<button type="button" class="secondary" data-it-saved-page="'+(page+1)+'">Siguientes recorridos</button>':''}</div>`;
+   }catch(e){if(identity()===token&&target.isConnected&&form===owner)target.textContent=e.message;}
+  }
+  async function saveEndpoints(){
+   capture();const owner=form,a=stops[0].location_id,b=stops.at(-1).location_id;
+   if(!a||!b)throw Error('Selecciona origen y destino antes de guardar el recorrido.');
+   const saved=await api(id,'/saved-routes','POST',{origin_location_id:Number(a),destination_location_id:Number(b)});
+   if(identity()!==token||form!==owner||!form.isConnected)return;
+   form.querySelector('#it-saved-status').textContent=saved.reused?'Este origen y destino ya estaban guardados. No se duplicó el recorrido.':'Origen y destino guardados. No se asignaron recursos ni se activó el viaje.';
+  }
+  function useEndpoints(routeId){
+   capture();const r=savedRows.find(r=>Number(r.id)===Number(routeId));
+   if(!r?.can_use)throw Error('Confirma las ubicaciones de este recorrido antes de reutilizarlo.');
+   if(data.progress.some(s=>s.actual_arrival||s.actual_departure))throw Error('El itinerario ya comenzó. Modifica sólo las paradas pendientes; no se reemplaza el recorrido completo.');
+   const first=opts.locations.find(l=>String(l.id)===String(r.origin_location_id)),last=opts.locations.find(l=>String(l.id)===String(r.destination_location_id));
+   if(!first||!last)throw Error('Las ubicaciones ya no están disponibles. Vuelve a abrir el planificador.');
+   const changed=String(stops[0].location_id)!==String(first.id)||String(stops.at(-1).location_id)!==String(last.id);
+   if(changed&&(stops[0].location_id||stops.at(-1).location_id)&&!window.confirm('¿Reemplazar sólo el origen y destino? Se conservan las paradas intermedias, cargas y horarios. Deberás revisar y recalcular el plan antes de guardarlo.'))return;
+   stops[0].location_id=first.id;stops.at(-1).location_id=last.id;draft.review='';savedSequence++;paint();
+   form.querySelector('#it-saved-status').textContent='Puntos incorporados al borrador. Revisa las cargas, accesos y restricciones; aún no se modificó el viaje.';
+  }
   function paint(){
    const stopOptions=stops.map((s,i)=>[s.key,(i+1)+'. '+(opts.locations.find(l=>String(l.id)===String(s.location_id))?.name||'Parada')]);
    form=modal('Planificar itinerario y tiempos',`<p class="it-help">Ordena las paradas. Al guardar se calculan los tramos por carretera y se conserva una nueva versión. Los tiempos de atención, espera y descanso se suman una sola vez. Máximo 12 paradas.</p>
+    <details class="it-stop"><summary>Recorridos guardados (opcional)</summary><p class="it-help">Reutiliza origen y destino de tu empresa. No copia camión, conductor, avance ni estado. Las paradas intermedias y la carga se gestionan en este viaje.</p><label>Buscar origen o destino<input id="it-saved-query" type="search" maxlength="120" value="${esc(savedQuery)}"></label><div class="it-actions"><button type="button" class="secondary" id="it-saved-browse">Ver recorridos guardados</button><button type="button" class="secondary" id="it-saved-save">Guardar origen y destino como recorrido</button></div><div class="it-saved-list" id="it-saved-routes"></div></details><p role="status" id="it-saved-status"></p>
     <div class="it-grid">${input('departure','Salida',draft.departure,'datetime-local','required')}${input('contingency_minutes','Margen de contingencia (min)',draft.contingency_minutes,'number','min="0" max="10080" required')}${input('reason','Motivo de este plan o cambio',draft.reason,'text','required maxlength="2000"')}</div>
     ${stops.map((s,i)=>`<div class="it-stop"><h4>Parada ${i+1}</h4><div class="it-grid">${select('s'+i+'_location_id','Ubicación',opts.locations.map(l=>[l.id,l.name+(l.address?' · '+l.address:'')]),s.location_id)}${select('s'+i+'_purpose','Propósito',types,s.purpose)}${input('s'+i+'_service_minutes','Carga / descarga / atención (min)',s.service_minutes,'number','min="0" max="10080" required')}${input('s'+i+'_wait_minutes','Espera prevista (min)',s.wait_minutes,'number','min="0" max="10080" required')}${input('s'+i+'_rest_minutes','Descanso (min)',s.rest_minutes,'number','min="0" max="10080" required')}</div><div class="it-actions"><button type="button" class="secondary" data-it-move="${i}" data-direction="-1" ${!i?'disabled':''}>Subir</button><button type="button" class="secondary" data-it-move="${i}" data-direction="1" ${i===stops.length-1?'disabled':''}>Bajar</button><button type="button" class="secondary" data-it-remove="${i}" ${stops.length<=2?'disabled':''}>Quitar</button></div></div>`).join('')}
     <div class="it-actions"><button type="button" class="secondary" id="it-add" ${stops.length>=12?'disabled':''}>Agregar parada</button><button type="button" class="secondary" id="it-location">Registrar ubicación en mapa</button></div>
@@ -42,6 +73,14 @@
     });
    form.querySelector('[type=submit]').textContent='Calcular ruta y guardar versión';
    form.onclick=async e=>{const b=e.target.closest?.('button');if(!b||b.disabled)return;
+    if(b.id==='it-saved-browse'||b.id==='it-saved-save'||b.dataset.itUse!=null||b.dataset.itSavedPage!=null){
+     b.disabled=true;try{
+      if(b.id==='it-saved-browse'){savedQuery=form.querySelector('#it-saved-query').value.trim();await browse();}
+      else if(b.id==='it-saved-save')await saveEndpoints();
+      else if(b.dataset.itSavedPage!=null)await browse(Number(b.dataset.itSavedPage));
+      else useEndpoints(b.dataset.itUse);
+     }catch(e){error(e);}finally{if(identity()===token&&b.isConnected)b.disabled=false;}return;
+    }
     if(b.id==='it-add'){capture();stops.push({key:key(),location_id:'',purpose:'delivery',service_minutes:0,wait_minutes:0,rest_minutes:0});paint();}
     else if(b.dataset.itMove!=null){capture();const i=Number(b.dataset.itMove),j=i+Number(b.dataset.direction);[stops[i],stops[j]]=[stops[j],stops[i]];paint();}
     else if(b.dataset.itRemove!=null){capture();stops.splice(Number(b.dataset.itRemove),1);paint();}
@@ -93,6 +132,12 @@
    }catch(e){if(identity()===token)alert(e.message);}finally{if(b.isConnected)b.disabled=false;}};
   }catch(e){if(identity()===token&&panel.isConnected)panel.innerHTML='<p role="alert">'+esc(e.message)+'</p>';}
  }
+ window.openTripPlanner=()=>{
+  const panel=document.querySelector('#tripPanelSummary .itinerary'),edit=panel?.querySelector('[data-action="edit"]');
+  if(edit)return edit.click();
+  if(panel){panel.scrollIntoView?.({block:'start'});return;}
+  alert('Espera a que cargue el planificador del viaje y vuelve a intentarlo.');
+ };
  const open=window.openTrip;
  if(open)window.openTrip=async function(id){if(timer){window.clearInterval(timer);timer=null;}await open(id);if(String(window.currentTripId)===String(id))await attach(id);};
 })();

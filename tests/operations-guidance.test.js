@@ -85,7 +85,9 @@ test('hints de recursos explican la cuenta asociada y conservan el contrato de a
   const {context,elements,requests,alerts}=surface();
   await context.assignTrip(7);
   assert.match(elements.form.innerHTML,/cuenta asociada en Administración → Usuarios/);
-  for(const id of ['tripRouteHelp','tripTruckHelp','tripDriverHelp','tripClientHelp']){
+  assert.doesNotMatch(elements.form.innerHTML,/<select name="route_id"/);
+  assert.match(elements.form.innerHTML,/Itinerario, cargas y tiempos/);
+  for(const id of ['tripTruckHelp','tripDriverHelp','tripClientHelp']){
     assert.ok(elements.form.innerHTML.includes('aria-describedby="'+id+'"'));
     assert.ok(elements.form.innerHTML.includes('id="'+id+'"'));
   }

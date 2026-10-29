@@ -45,6 +45,12 @@ test('versión obsoleta conserva formulario y no finge confirmación',async()=>{
  await s.submit({composition_id:'',truck_id:'3',trailer_id:'4',driver_id:'5',client_id:'6',route_id:'',reason:'Reemplazo'});
  assert.match(s.elements.form.querySelector('.eq-error').textContent,/asignación cambió/);assert.equal(s.elements.form.querySelector('[type=submit]').disabled,false);assert.equal(s.state.opened,undefined);
 });
+test('asignar recursos no vuelve a elegir recorrido ni borra su referencia histórica',async()=>{
+ const s=surface({fetcher:u=>u===TRIP?{trip:{id:7,resource_version:3,truck_id:3,driver_id:5,client_id:6,route_id:42},history:[]}:undefined});
+ await s.state.assignTrip(7);assert.doesNotMatch(s.elements.form.innerHTML,/<select name="route_id"/);assert.match(s.elements.form.innerHTML,/Itinerario, cargas y tiempos/);
+ await s.submit({composition_id:'',truck_id:'3',driver_id:'5',client_id:'6',route_id:'999',reason:'Conservar recorrido histórico'});
+ assert.equal(JSON.parse(mutations(s)[0].options.body).route_id,42);
+});
 test('historial identifica al autor y revisión; consulta no habilita editar',async()=>{
  const s=surface({canManage:false});await s.mount();assert.doesNotMatch(s.root.innerHTML,/data-eq-action="edit"/);await s.click('history','1');
  assert.match(s.root.querySelector('#eq-history').innerHTML,/Ana &lt;script&gt;/);assert.match(s.root.querySelector('#eq-history').innerHTML,/Más revisiones/);
