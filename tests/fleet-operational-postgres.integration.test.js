@@ -159,6 +159,7 @@ test('flota operacional PostgreSQL aislado: migración, documentos y onboarding'
    assert.equal((await one("select count(*)::int n from audit_logs where company_id=$1 and entity='trip' and action='create'",[c.id])).n,1);
    const assign=await run('patch','/api/operations/trips/:id/assign',actor,{params:{id:first.payload.id},body:{truck_id:v.id,driver_id:d.d.id,client_id:client.id}});
    assert.equal(assign.statusCode,200,JSON.stringify(assign.payload));assert.equal(assign.payload.status,'Asignado');
+   await require('./helpers/predeparture-fixture').recordPredepartureFixture(pool,first.payload.id);
    const activate=await run('patch','/api/trips/:id/status',actor,{params:{id:first.payload.id},body:{status:'En tránsito'}});
    assert.equal(activate.statusCode,200,JSON.stringify(activate.payload));
    await query("update trucks set status='Mantención' where id=$1",[v.id]);

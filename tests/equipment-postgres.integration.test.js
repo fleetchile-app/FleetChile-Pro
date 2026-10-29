@@ -103,7 +103,7 @@ test('PL14/15 PostgreSQL aislado: composiciones, reservas, reemplazos, GPS e his
    const load=await one("insert into trip_loads(trip_id,client_id,cargo) values($1,$2,'Madera') returning id",[a.id,f.client.id]);
    const proof=await one("insert into trip_delivery_proofs(trip_id,load_id,recipient_name,created_by) values($1,$2,'Receptor', $3) returning id",[a.id,load.id,f.d.u.id]);
    const file=await one("insert into delivery_proof_files(proof_id,type,storage_key,mime_type,size,sha256,created_by) values($1,'signature','equipment-fixture/signature.png','image/png',10,$2,$3) returning *",[proof.id,'a'.repeat(64),f.d.u.id]);
-   r=await run(f,'patch','/api/operations/trips/:id/status',{status:'En tránsito'},{id:a.id});assert.equal(r.statusCode,200);a=r.payload;
+   await require('./helpers/predeparture-fixture').recordPredepartureFixture(pool,a.id);r=await run(f,'patch','/api/operations/trips/:id/status',{status:'En tránsito'},{id:a.id});assert.equal(r.statusCode,200,JSON.stringify(r.payload));a=r.payload;
    const main2=await truck(f.cid),trailer2=await truck(f.cid,'Remolque',8),d2=await driver(f.cid),g={...f,main:main2,trailer:trailer2,d:d2};
    r=await assign(g,a,null);assert.equal(r.statusCode,400);r=await assign(g,a,null,{reason:'Falla mecánica y relevo autorizado'});assert.equal(r.statusCode,200,JSON.stringify(r.payload));const next=r.payload.trip;
    assert.equal(next.resource_version,2);assert.equal(next.status,'En tránsito');
@@ -134,7 +134,7 @@ test('PL14/15 PostgreSQL aislado: composiciones, reservas, reemplazos, GPS e his
   });
   await t.test('ingreso a taller también detecta viaje en ejecución cuando el activo es el remolque',async()=>{
    const f=await fixture(),t=await trip(f);let r=await assign(f,t,null);assert.equal(r.statusCode,200);const a=r.payload.trip;
-   r=await run(f,'patch','/api/operations/trips/:id/status',{status:'En tránsito'},{id:a.id});assert.equal(r.statusCode,200);
+   await require('./helpers/predeparture-fixture').recordPredepartureFixture(pool,a.id);r=await run(f,'patch','/api/operations/trips/:id/status',{status:'En tránsito'},{id:a.id});assert.equal(r.statusCode,200,JSON.stringify(r.payload));
    r=await run(f,'post','/api/fleet/work-orders',{mode:'receive',truck_id:f.trailer.id,maintenance_type:'Correctiva',reason:'Acoplado',received_at:new Date().toISOString(),odometer_km:0});assert.equal(r.statusCode,409);
    await query('insert into telemetry(truck_id,trip_id,lat,lng) values($1,$2,-36,-73)',[f.main.id,a.id]);
    const main2=await truck(f.cid),g={...f,main:main2};r=await assign(g,a,null,{reason:'Reemplazo de tracto'});assert.equal(r.statusCode,200);

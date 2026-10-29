@@ -47,7 +47,7 @@ function registerDriverWorkflow(app,pool,{driverAccess,enforceDriverPersonnel}){
    if(action==='events'){
     versions(trip,b);
     const result=await recordItineraryEvent(db,req,trip,b,{pickups:true});
-    if(result.created&&b.kind==='depart')await require('./trip-eligibility').assertTripResourcesReady(db,{companyId:trip.company_id,truckId:trip.truck_id,trailerId:trip.trailer_id,driverId:trip.driver_id,tripId:trip.id,status:'En tránsito',plannedDeparture:trip.planned_departure,plannedArrival:trip.planned_arrival,compositionSnapshot:trip.composition_snapshot,itineraryVersion:trip.itinerary_version});
+    if(result.created&&b.kind==='depart')await require('./trip-eligibility').assertTripResourcesReady(db,{companyId:trip.company_id,truckId:trip.truck_id,trailerId:trip.trailer_id,driverId:trip.driver_id,tripId:trip.id,status:'En tránsito',predeparture:true,plannedDeparture:trip.planned_departure,plannedArrival:trip.planned_arrival,compositionSnapshot:trip.composition_snapshot,itineraryVersion:trip.itinerary_version});
     await db.query('COMMIT');return res.status(result.created?201:200).json(result.row);
    }
    const key=D.key(b.client_key),hash=digest(b);

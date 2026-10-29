@@ -14,7 +14,7 @@ test('combustible crea una carga, calcula total y audita antes de COMMIT',async(
   const pool=mockPool(async(sql,values)=>{
     if(sql==='BEGIN'||sql==='COMMIT')return {rows:[],rowCount:0};
     if(sql.startsWith('select id,company_id,patente from trucks')){assert.deepEqual(values,[3,10]);return {rows:[{id:3,company_id:10,patente:'ABCD12'}],rowCount:1}}
-    if(sql.startsWith('insert into fuel')){assert.match(sql,/\$5\*\$6/);assert.deepEqual(values,[10,'2026-08-19','ABCD12',3,100,1200,'Copec',10500]);return {rows:[created],rowCount:1}}
+    if(sql.startsWith('insert into fuel')){assert.match(sql,/\$5::numeric\*\$6::numeric/);assert.deepEqual(values,[10,'2026-08-19','ABCD12',3,100,1200,'Copec',10500]);return {rows:[created],rowCount:1}}
     if(sql.startsWith('insert into audit_logs')){assert.equal(values[0],10);assert.equal(values[1],7);assert.equal(values[2],'create');assert.equal(values[3],'fuel');assert.equal(values[4],'41');assert.equal(values[6].total_clp,'120000');return {rows:[],rowCount:1}}
     throw new Error(`Consulta inesperada: ${sql}`);
   });

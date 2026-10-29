@@ -41,10 +41,10 @@ test('aceptación integrada: sesiones, prepago, tres entregas, incidentes, talle
    assert.equal((await call(driver.token,'get',MOBILE,{}, {id:trip.id})).statusCode,403);
    await admin('post','/api/company/people/:id/licenses',{classes:['A5'],printed_expiry:'2099-12-31'},{id:person.id});
    assert.equal((await call(driver.token,'get',MOBILE,{}, {id:trip.id})).statusCode,200);
-   const today=require('../personnel-domain').companyDate(),condition=await admin('post','/api/company/people/:id/conditions',{type:'vacation',start_date:today,end_date:today},{id:person.id});
+   const today=require('../personnel-domain').companyDate(),condition=await admin('post','/api/company/people/:id/conditions',{type:'vacation',start_date:today,end_date:today,reason:'Vacaciones sintéticas'},{id:person.id});
    assert.equal((await call(driver.token,'get',MOBILE,{}, {id:trip.id})).statusCode,403);
    await admin('post','/api/company/people/:id/conditions/:conditionId/cancel',{reason:'Fin anticipado sintético'},{id:person.id,conditionId:condition.condition.id});
-   await admin('post','/api/company/people/:id/conditions',{type:'permission',start_date:'2000-01-01',end_date:'2000-01-02'},{id:person.id});
+   await admin('post','/api/company/people/:id/conditions',{type:'permission',start_date:'2000-01-01',end_date:'2000-01-02',reason:'Permiso sintético vencido'},{id:person.id});
    assert.equal((await call(driver.token,'get',MOBILE,{}, {id:trip.id})).statusCode,200);
    const {reconcilePersonnelNotifications}=require('../personnel-monitor');await reconcilePersonnelNotifications(pool);const before=await h.one('select count(*)::int n from personnel_notifications where company_id=$1',[a.id]);await reconcilePersonnelNotifications(pool);assert.ok(before.n>0);assert.equal((await h.one('select count(*)::int n from personnel_notifications where company_id=$1',[a.id])).n,before.n);
    const actor=await h.one("select actor_user_id from person_events where person_id=$1 and action='license_renew' order by id desc limit 1",[person.id]);assert.equal(Number(actor.actor_user_id),a.admin.id);

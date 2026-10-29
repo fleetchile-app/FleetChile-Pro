@@ -278,10 +278,10 @@ function registerPersonnelRoutes(app,pool,{resolveActorContext,requirePermission
  }));
  app.post(BASE+'/:id/conditions',...mutate('company.people.manage',async(db,p,req)=>{
   if(sameId(p.user_id,actor(req)))throw error(403,'No puedes bloquear tu propio acceso empresarial');
-  const v=checked(domain.validateCondition,req.body);
+  const v=checked(domain.validateCondition,req.body),why=reason(req.body.reason);
   const row=(await db.query(`insert into person_conditions(company_id,person_id,type,start_date,end_date,created_by)
    values($1,$2,$3,$4,$5,$6) returning *`,[cid(req),p.id,v.type,v.start_date,v.end_date,actor(req)])).rows[0];
-  await repo.record(db,req,cid(req),p.id,'condition_create',null,row);return {condition:row};
+  await repo.record(db,req,cid(req),p.id,'condition_create',null,row,why);return {condition:row};
  }));
  for(const action of ['cancel','extend'])app.post(BASE+'/:id/conditions/:conditionId/'+action,...mutate('company.people.manage',async(db,p,req)=>{
   const why=reason(req.body.reason),conditionId=id(req.params.conditionId);

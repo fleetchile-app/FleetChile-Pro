@@ -17,6 +17,7 @@ function setup({owned=true,permission='loads.manage',company=10,tripClient=11}={
     calls.push({sql,values});let rows=[];
     if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return {rows,rowCount:0};
     if(sql.startsWith('select id,name,rut from clients'))rows=[{id:'11',name:'Mi cliente',rut:'RUT prueba'}];
+    else if(sql.startsWith('select id,patente,tipo,status from trucks'))rows=[{id:1,patente:'QA-OWN',tipo:'Camión',status:'Disponible'}];
     else if(sql.startsWith('select id,name from clients')||sql.startsWith('select id from clients'))rows=owned?[{id:'11',name:'Nombre real'}]:[];
     else if(sql.includes('from trips t where'))rows=[{id:7,company_id:10,client_id:tripClient,status:'Planificado'}];
     else if(sql.startsWith('select id from trucks')||sql.startsWith('select id from drivers'))rows=[{id:1}];
@@ -128,7 +129,7 @@ function browser(clients=[{id:'11',name:'Mi cliente & empresa',rut:'RUT prueba'}
   const document={getElementById:id=>elements[id]||(elements[id]={innerHTML:'',data:[],querySelectorAll:()=>[],classList:{add(){},remove(){}}}),querySelectorAll:()=>[],querySelector:()=>null};
   const context={document,Auth:{user:{actor_type:'company',role_code:'operations',company_id:10}},localStorage:{getItem:()=>null},alert:message=>alerts.push(message),setInterval(){},setTimeout(){},clearTimeout(){},URLSearchParams,FormData:class{constructor(form){return form.data}},fetch:async(url,opt={})=>{
     requests.push({url,opt});
-    return {ok:true,status:200,json:async()=>url.endsWith('/clients')?clients:opt.method?{id:21}:[]};
+    return {ok:true,status:200,json:async()=>url.endsWith('/resources')?{trucks:[]}:url.endsWith('/clients')?clients:opt.method?{id:21}:[]};
   }};
   context.window=context;vm.createContext(context);
   vm.runInContext(fs.readFileSync(require.resolve('../public/app.js'),'utf8'),context);
@@ -157,4 +158,18 @@ test('sin clientes registrados la interfaz explica el alta y no permite guardar'
   elements.form.data=[['client_id','99'],['cargo','Carga']];
   await elements.form.onsubmit({preventDefault(){},target:elements.form});
   assert.equal(requests.some(request=>request.opt.method==='POST'),false);
+});
+
+test('catálogo de camiones para cargas usa solo empresa activa y permiso loads.manage',async()=>{
+ const {pool,user,route}=setup();const r=await invoke(route('get','/api/loads/resources'),user);
+ assert.equal(r.statusCode,200);assert.deepEqual(pool.calls[0].values,[10]);assert.equal(r.payload.trucks[0].patente,'QA-OWN');
+ assert.equal((await invoke(route('get','/api/loads/resources'),{...user,permissions:[]})).statusCode,403);
+ assert.equal((await invoke(route('get','/api/loads/resources'),{...user,actor_type:'platform',scope:'platform',company_id:null,platform_membership_id:1})).statusCode,403);
+});
+
+test('carga no acepta patente inventada desde el formulario ni exige escribir un camión',async()=>{
+ const {context,elements,requests,alerts}=browser();await context.openForm('loads');
+ assert.match(elements.form.innerHTML,/<select name="truck">/);assert.doesNotMatch(elements.form.innerHTML,/<input name="truck"/);assert.match(elements.form.innerHTML,/Asignar después/);
+ elements.form.data=[['client_id','11'],['truck','AJENO']];await elements.form.onsubmit({preventDefault(){},target:elements.form});
+ assert.equal(requests.some(r=>r.opt.method==='POST'),false);assert.match(alerts[0],/tu flota/);
 });

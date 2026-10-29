@@ -193,8 +193,8 @@ test('account creation honors user_limit under locked company without creating a
  const res=await h.run('post',BASE,{body:{name:p.name,rut:p.rut,birth_date:p.birth_date,create_account:true,email:'new@example.test',password:'Password1234',role_id:'5'}});assert.equal(res.statusCode,409);assert.equal(h.calls.some(c=>c.q.startsWith('insert into users')),false);assert.equal(h.releases,1);
 });
 test('condition event audit failure rolls back insertion and releases the same transaction',async()=>{
- const h=harness([...txPerson(),sql(/^insert into person_conditions/,['10','70','vacation','2026-01-01','2026-01-02','1'],[{id:80}]),event('condition_create'),sql(/^insert into audit_logs/,undefined,[],{error:Error('audit unavailable')}),rollback()]);
- const res=await h.run('post',BASE+'/:id/conditions',{body:{type:'vacation',start_date:'2026-01-01',end_date:'2026-01-02'}});assert.equal(res.statusCode,500);assert.equal(h.releases,1);assert.equal(h.calls.some(c=>c.q==='COMMIT'),false);
+ const h=harness([...txPerson(),sql(/^insert into person_conditions/,['10','70','vacation','2026-01-01','2026-01-02','1'],[{id:80}]),event('condition_create','Vacaciones QA'),sql(/^insert into audit_logs/,undefined,[],{error:Error('audit unavailable')}),rollback()]);
+ const res=await h.run('post',BASE+'/:id/conditions',{body:{type:'vacation',start_date:'2026-01-01',end_date:'2026-01-02',reason:'Vacaciones QA'}});assert.equal(res.statusCode,500);assert.equal(h.releases,1);assert.equal(h.calls.some(c=>c.q==='COMMIT'),false);
 });
 test('contract replacement rolls back the void when replacement validation fails',async()=>{
  const old={id:'90',type:'fixed',start_date:'2026-01-01',end_date:'2026-02-01'};
@@ -351,7 +351,7 @@ test('platform support cannot create conditions for a person outside the selecte
  assert.equal((await h.run('post',BASE+'/:id/conditions',{body:{type:'vacation',start_date:'2026-01-01',end_date:'2026-01-02'}})).statusCode,404);
 });
 test('platform personnel mutation preserves native platform actor in both events and audit',async()=>{
- const h=harness([...txPerson(),sql(/^insert into person_conditions/,['10','70','vacation','2026-01-01','2026-01-02','1'],[{id:'80'}]),event('condition_create'),audit('condition_create'),commit()],supportActor);
- assert.equal((await h.run('post',BASE+'/:id/conditions',{body:{type:'vacation',start_date:'2026-01-01',end_date:'2026-01-02'}})).statusCode,200);
+ const h=harness([...txPerson(),sql(/^insert into person_conditions/,['10','70','vacation','2026-01-01','2026-01-02','1'],[{id:'80'}]),event('condition_create','Vacaciones QA'),audit('condition_create'),commit()],supportActor);
+ assert.equal((await h.run('post',BASE+'/:id/conditions',{body:{type:'vacation',start_date:'2026-01-01',end_date:'2026-01-02',reason:'Vacaciones QA'}})).statusCode,200);
  assert.equal(h.releases,1);assert.deepEqual(supportActor.permissions,['platform.users.manage']);
 });

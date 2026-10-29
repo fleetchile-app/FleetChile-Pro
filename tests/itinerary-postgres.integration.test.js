@@ -191,6 +191,8 @@ test('PL16–PL24 PostgreSQL aislado: itinerarios, capacidad, tiempos y excepcio
   });
   await t.test('móvil: recogidas obligatorias, paradas ordenadas, excepciones y POD por entrega',async()=>{
    const {f,df,ctx}=await mobileScenario();let key=0;
+   assert.equal((await run(df,'post',MOBILE+'/accept',{...ctx,client_key:'itinerary-accept'},{id:f.trip.id})).statusCode,201);
+   assert.equal((await run(df,'post',MOBILE+'/checklist',{...ctx,client_key:'itinerary-checklist',items:require('../driver-workflow-api').CHECKS.map(id=>({id,result:'ok'}))},{id:f.trip.id})).statusCode,201);
    const send=(kind,stop_key,more={})=>run(df,'post',MOBILE+'/events',{...ctx,event_key:'mobile-event-'+ ++key,kind,stop_key,...more},{id:f.trip.id});
    assert.equal((await send('pickup','s0',{load_id:Number(f.loads[0].id)})).statusCode,409);
    const arrival={...ctx,event_key:'mobile-arrival',kind:'arrive',stop_key:'s0',reported_at:'2026-01-01T00:00:00Z'};

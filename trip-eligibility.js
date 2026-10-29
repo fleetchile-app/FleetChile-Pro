@@ -23,9 +23,11 @@ async function assertTripResourcesReady(db,{companyId,truckId,driverId,trailerId
  }
  E.windowCheck(compositionSnapshot,{...schedule,now:now||new Date()});
  await assertTripAvailability(db,{companyId,truckId,driverId,trailerId,...schedule});
+ if(schedule.predeparture===true)await require('./trip-predeparture').assertPredeparture(db,{companyId,tripId:schedule.tripId,truckId,driverId});
 }
 const requiresRoadAuthorization=status=>['Asignado','En carga','En tránsito'].includes(status);
 function resourceFailure(res,error,fallback,{hideConflicts=false}={}){
+ if(['TRIP_ACCEPTANCE_REQUIRED','TRIP_CHECKLIST_REQUIRED'].includes(error?.code))return res.status(409).json({code:error.code,error:error.message});
  if(error?.code?.startsWith('P75'))return res.status(409).json({code:'COMMERCIAL_BLOCKED',error:error.message+'. Solicita revisión de los cupos pagados en Capacidad y servicios.'});
  if(hideConflicts&&error?.code==='TRIP_RESOURCE_CONFLICT')return res.status(409).json({code:error.code,error:'El camión o conductor tiene otra reserva incompatible. Contacta a operaciones para revisar la asignación.'});
  if(error?.status&&(error.code?.startsWith('ITINERARY_')||['VEHICLE_NOT_ROAD_READY','DRIVER_NOT_OPERATIONAL_READY','TRIP_RESOURCE_CONFLICT','INVALID_TRIP_INTERVAL','EQUIPMENT_INVALID','COMPOSITION_OUTSIDE_WINDOW'].includes(error.code)))return res.status(error.status).json({code:error.code,error:error.message,reasons:error.reasons||[],...(error.details?{details:error.details}:{})});
