@@ -11,6 +11,7 @@ function prepare(env=process.env,{native=false,extended=false}={}){
    'tests/pod-evidence.test.js','tests/pod-evidence-browser.test.js','tests/driver-recovery-browser.test.js',
    'tests/itinerary-postgres.integration.test.js','tests/equipment-postgres.integration.test.js',
    'tests/saved-routes-postgres.integration.test.js','tests/trip-planner-navigation-browser.test.js',
+   'tests/itinerary-coherence.test.js','tests/trip-coherence-browser.test.js',
    'tests/finance-postgres.integration.test.js','tests/commercial-postgres.integration.test.js',
    'tests/enterprise-postgres.integration.test.js','tests/company-branding-postgres.integration.test.js',
    'tests/driver-pdf.test.js','tests/platform-ownership.test.js','tests/bootstrap-owner.test.js'];

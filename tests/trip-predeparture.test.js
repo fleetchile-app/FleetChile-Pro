@@ -16,3 +16,8 @@ test('inspección completa de los recursos actuales permite salida sin alterar d
 test('errores predespacho se preservan como 409 sin datos privados',()=>{
  const res={status(n){this.code=n;return this;},json(v){this.body=v;return this;}};resourceFailure(res,{code:'TRIP_CHECKLIST_REQUIRED',message:'Completa el checklist'},'Error genérico');assert.equal(res.code,409);assert.equal(res.body.error,'Completa el checklist');
 });
+
+test('un viaje georreferenciado sin itinerario confirmado no inicia aunque tenga aceptación y checklist',async()=>{
+ const d=db(),query=d.query.bind(d);d.query=async(sql,v)=>sql.includes('driver_mobile_actions')?{rows:[{id:1,origin_location_id:2,destination_location_id:3,itinerary_version:0}]}:query(sql,v);
+ await assert.rejects(assertPredeparture(d,args),e=>e.code==='ITINERARY_LOCATION_CONFLICT');
+});

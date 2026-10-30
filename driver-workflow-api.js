@@ -12,9 +12,10 @@ function versions(trip,b){
 async function validateDeliveryContext(db,trip,b,loadId){
  if(b.resource_version!==undefined||b.version!==undefined)versions(trip,b);
  if(terminal(trip.status))throw D.fail('El viaje está cerrado',409);
- if(!trip.itinerary_version)return;
+ if(!trip.itinerary_version){if(trip.origin_location_id||trip.destination_location_id)throw D.fail('Confirma el itinerario del viaje antes de registrar entregas.',409,'ITINERARY_LOCATION_CONFLICT');return;}
  const revision=await currentPlan(db,trip),state=await loadState(db,trip);
  if(!revision)throw D.fail('No se encontró el itinerario',409);
+ await require('./itinerary-coherence').verify(db,trip,revision.plan,state.loads,state.events);
  if(JSON.stringify(D.signature(state.loads))!==JSON.stringify(revision.plan.load_signature))throw D.fail('Las cargas cambiaron: operaciones debe revisar el itinerario',409,'ITINERARY_STALE');
  const next=D.progress(revision.plan,state.events).find(s=>!s.actual_departure),mapping=revision.plan.loads.find(m=>String(m.load_id)===String(loadId));
  if(!mapping||mapping.delivery!==next?.key||!next.actual_arrival)throw D.fail('Registra la llegada a la parada de esta entrega antes de confirmarla',409,'DELIVERY_STOP_PENDING');

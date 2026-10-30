@@ -37,7 +37,7 @@ test('Chrome: documentos claros, sin menú Rutas y recorridos opcionales dentro 
    assert.equal(writes.length,viewport.width===1440?0:2,'Seleccionar no debe guardar ni activar el servicio');
    await page.getByText('Recorridos guardados (opcional)',{exact:true}).click();await page.getByRole('button',{name:'Guardar origen y destino como recorrido',exact:true}).click();await page.getByText('Origen y destino guardados. No se asignaron recursos ni se activó el viaje.',{exact:true}).waitFor();
    assert.deepEqual(writes.at(-1).body,{origin_location_id:1,destination_location_id:2});assert.match(writes.at(-1).p,/saved-routes$/);
-   await page.locator('[name=reason]').fill('Planificación sintética');await page.locator('[name=review]').fill('Accesos y restricciones revisados');await page.locator('[name=acknowledged]').check();
+   await page.locator('[name=reason]').fill('Planificación sintética');await page.locator('[name=review]').fill('Accesos y restricciones revisados');await page.locator('[name=acknowledged]').check();await page.locator('[name=load_locations_ack]').check();
    await page.getByRole('button',{name:'Calcular ruta y guardar versión',exact:true}).click();await page.locator('#modal').waitFor({state:'hidden'});
    assert.match(writes.at(-1).p,/\/itinerary$/);assert.equal(writes.at(-1).body.resource_version,3);assert.equal(writes.at(-1).body.stops[0].location_id,1);assert.equal(writes.at(-1).body.stops[1].location_id,2);assert.equal(writes.at(-1).body.loads[0].load_id,9);assert.equal('truck_id' in writes.at(-1).body,false);
   }

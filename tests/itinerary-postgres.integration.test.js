@@ -61,12 +61,74 @@ test('PL16–PL24 PostgreSQL aislado: itinerarios, capacidad, tiempos y excepcio
    const p=await trip(f),assigned=await assign(f,p,null);assert.equal(assigned.statusCode,200,JSON.stringify(assigned.payload));f.trip=assigned.payload.trip;
    f.locations=[];for(let i=0;i<4;i++)f.locations.push(await one("insert into operational_locations(company_id,name,lat,lng,source,normalized_at) values($1,$2,$3,$4,'fixture',now()) returning *",[f.cid,'Lugar fixture '+i,-36+i*.1,-73+i*.1]));
    f.loads=[];for(const [i,weight] of [4000,3000,3000].entries())f.loads.push(await one("insert into trip_loads(trip_id,client_id,cargo,weight_kg) values($1,$2,$3,$4) returning *",[f.trip.id,f.client.id,'Carga fixture '+i,weight]));
-   f.body={version:0,resource_version:f.trip.resource_version,departure:'2026-11-01T08:00:00Z',contingency_minutes:10,reason:'Plan multientrega fixture',vehicle_review:{acknowledged:true,notes:'Revisión operacional fixture, no certificación legal'},
+   f.body={load_locations_ack:true,endpoint_change_ack:true,version:0,resource_version:f.trip.resource_version,departure:'2026-11-01T08:00:00Z',contingency_minutes:10,reason:'Plan multientrega fixture',vehicle_review:{acknowledged:true,notes:'Revisión operacional fixture, no certificación legal'},
     stops:f.locations.map((l,i)=>({key:'s'+i,location_id:Number(l.id),purpose:i?'delivery':'pickup',service_minutes:10,wait_minutes:5,rest_minutes:0})),
     loads:f.loads.map((l,i)=>({load_id:Number(l.id),pickup:'s0',delivery:'s'+(i+1)}))};return f;
   }
-  const save=(f,extra={})=>run(f,'put',IT,{...f.body,...extra},{id:f.trip.id});
+  const save=async(f,extra={})=>run(f,'put',IT,{...f.body,load_locations_token:require('../itinerary-coherence').token((await query('select * from trip_loads where trip_id=$1 order by id',[f.trip.id])).rows),...extra},{id:f.trip.id});
   const event=(f,kind,stop='s0',extra={})=>run(f,'post',IT+'/events',{version:1,event_key:'event-'+ ++serial,kind,stop_key:stop,...extra},{id:f.trip.id});
+
+  await t.test('coherencia: confirmar puntos de cargas es explícito, transaccional y genera snapshot vial vigente',async()=>{
+   const f=await scenario();let r=await save(f,{load_locations_ack:false});
+   assert.equal(r.statusCode,409);assert.equal(r.payload.code,'ITINERARY_LOCATION_CONFLICT');
+   assert.equal((await one('select count(*)::int n from trip_itinerary_revisions where trip_id=$1',[f.trip.id])).n,0);
+   assert.equal((await one('select origin_location_id from trip_loads where id=$1',[f.loads[0].id])).origin_location_id,null);
+   r=await save(f);assert.equal(r.statusCode,200,JSON.stringify(r.payload));
+   const stored=await one('select * from trips where id=$1',[f.trip.id]);
+   const snapshot=await one('select * from trip_route_snapshots where id=$1',[stored.planned_route_snapshot_id]);
+   assert.equal(Number(snapshot.origin_location_id),Number(f.locations[0].id));
+   assert.equal(Number(snapshot.destination_location_id),Number(f.locations[3].id));
+   assert.equal(snapshot.geometry.type,'MultiLineString');assert.equal(snapshot.geometry.coordinates.length,3);
+   assert.equal(Number(snapshot.distance_meters),r.payload.plan.distance_meters);
+   assert.equal(Number((await one('select destination_location_id from trip_loads where id=$1',[f.loads[0].id])).destination_location_id),Number(f.locations[1].id));
+   assert.equal((await run(f,'get',IT,{}, {id:f.trip.id})).payload.coherence.ready,true);
+  });
+  await t.test('coherencia: cambio de destino exige confirmación y conserva versión anterior',async()=>{
+   const f=await scenario();assert.equal((await save(f)).statusCode,200);
+   const changed=structuredClone(f.body);changed.version=1;changed.stops.at(-1).location_id=Number(f.locations[2].id);
+   let r=await save(f,{...changed,endpoint_change_ack:false});assert.equal(r.statusCode,409);
+   assert.equal((await one('select itinerary_version from trips where id=$1',[f.trip.id])).itinerary_version,1);
+   r=await save(f,changed);assert.equal(r.statusCode,200,JSON.stringify(r.payload));
+   const old=await one('select plan from trip_itinerary_revisions where trip_id=$1 and version=1',[f.trip.id]);
+   assert.equal(old.plan.stops.at(-1).location_id,Number(f.locations[3].id));
+   assert.equal((await one('select count(*)::int n from trip_route_snapshots where trip_id=$1',[f.trip.id])).n,2);
+  });
+  await t.test('coherencia: cambios externos de carga o de coordenadas bloquean operación y son visibles',async()=>{
+   const f=await scenario();assert.equal((await save(f)).statusCode,200);
+   await query('update trip_loads set destination_location_id=$1 where id=$2',[f.locations[2].id,f.loads[0].id]);
+   let state=await run(f,'get',IT,{}, {id:f.trip.id});assert.equal(state.payload.coherence.ready,false);
+   await assert.rejects(require('../itinerary-api').checkItinerary(pool,{...f.trip,itinerary_version:1}),e=>e.code==='ITINERARY_LOCATION_CONFLICT');
+   assert.equal((await save(f,{version:1,load_locations_ack:false})).statusCode,409);
+   assert.equal((await save(f,{version:1})).statusCode,200);
+   await query('update operational_locations set lat=lat+0.01 where id=$1',[f.locations[3].id]);
+   state=await run(f,'get',IT,{}, {id:f.trip.id});assert.equal(state.payload.coherence.ready,false);
+   assert.match(state.payload.coherence.issues.join(' '),/acceso del mapa/);
+  });
+  await t.test('coherencia: fallo de auditoría revierte fichas, snapshot, cabecera y plan',async()=>{
+   const f=await scenario();
+   await pg.exec("create function fail_coherence_audit() returns trigger as $$ begin if NEW.entity='trip_itinerary' then raise exception 'fixture coherence audit'; end if; return NEW; end; $$ language plpgsql; create trigger coherence_fail_audit before insert on audit_logs for each row execute function fail_coherence_audit();");
+   try{assert.equal((await save(f)).statusCode,500);}finally{await pg.exec('drop trigger coherence_fail_audit on audit_logs; drop function fail_coherence_audit();');}
+   assert.equal((await one('select itinerary_version from trips where id=$1',[f.trip.id])).itinerary_version,0);
+   assert.equal((await one('select origin_location_id from trip_loads where id=$1',[f.loads[0].id])).origin_location_id,null);
+   assert.equal((await one('select count(*)::int n from trip_route_snapshots where trip_id=$1',[f.trip.id])).n,0);
+  });
+  await t.test('coherencia: una ficha abierta antes de un cambio de carga no sobrescribe su destino',async()=>{
+   const f=await scenario();assert.equal((await save(f)).statusCode,200);
+   const token=require('../itinerary-coherence').token((await query('select * from trip_loads where trip_id=$1',[f.trip.id])).rows);
+   await query('update trip_loads set destination_location_id=$1 where id=$2',[f.locations[3].id,f.loads[0].id]);
+   const r=await save(f,{version:1,load_locations_token:token});assert.equal(r.statusCode,409);assert.equal(r.payload.code,'ITINERARY_STALE');
+   assert.equal(Number((await one('select destination_location_id from trip_loads where id=$1',[f.loads[0].id])).destination_location_id),Number(f.locations[3].id));
+  });
+  await t.test('coherencia: conserva accesos y tramos ya ejecutados aunque cambie la ubicación maestra',async()=>{
+   const f=await scenario(),first=await save(f);assert.equal(first.statusCode,200);
+   assert.equal((await event(f,'arrive','s0')).statusCode,201);assert.equal((await event(f,'depart','s0')).statusCode,201);assert.equal((await event(f,'arrive','s1')).statusCode,201);
+   await query('update operational_locations set lat=lat+0.01 where id=$1',[f.locations[0].id]);
+   const r=await save(f,{version:1});assert.equal(r.statusCode,200,JSON.stringify(r.payload));
+   assert.equal(r.payload.plan.stops[0].location.lat,first.payload.plan.stops[0].location.lat);
+   assert.deepEqual(r.payload.plan.legs[0],first.payload.plan.legs[0]);
+   const bad=structuredClone(f.body.stops);bad[0].service_minutes=30;
+   assert.equal((await save(f,{version:2,stops:bad})).statusCode,409);
+  });
 
   await t.test('migración idempotente; no fabrica planes para viajes existentes',async()=>{
    const f=await scenario();await pg.exec(source('migrations/035_trip_itineraries.sql'));

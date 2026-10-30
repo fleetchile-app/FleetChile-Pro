@@ -5,6 +5,7 @@ const id=value=>['string','number'].includes(typeof value)&&Number.isSafeInteger
 async function bindLocations(db,table,row,body,companyId,actorId=null){
  if(!['routes','trips','loads','trip_loads'].includes(table))throw fail('Recurso no válido');
  if(!['origin_location_id','destination_location_id','road_route_id'].some(k=>body[k]!=null&&body[k]!==''))return row;
+ if(table==='trips'&&row.itinerary_version>0)throw Object.assign(fail('Modifica los puntos desde el itinerario versionado del viaje'),{status:409,code:'ITINERARY_LOCATION_CONFLICT'});
  const origin=id(body.origin_location_id),destination=id(body.destination_location_id);
  if(!origin||!destination)throw fail('Selecciona y confirma origen y destino');
  const found=(await db.query('select id,name,address from operational_locations where company_id=$1 and id=any($2::bigint[]) for share',[companyId,[origin,destination]])).rows;

@@ -13,15 +13,28 @@ const roadRoute={id:31,company_id:10,origin_location_id:41,destination_location_
 const snapshot={id:51,company_id:10,trip_id:21,road_route_id:31,origin_location_id:41,destination_location_id:42,distance_meters:'500250.4',duration_seconds:'19800.5',geometry:roadRoute.geometry,provider:'osrm',route_calculated_at:'2026-08-18T18:00:00.000Z',created_by:5};
 const updatedTrip={...currentTrip,distance_km:'500.2504',planned_route_snapshot_id:51};
 
+for(const [label,changes] of [['itinerario versionado',{itinerary_version:1}],['viaje cerrado',{status:'Completado'}],['puntos contradictorios',{origin_location_id:99,destination_location_id:42}]])test('ruta alternativa rechaza '+label+' sin modificar ni crear snapshots',async()=>{
+ const pool=transactionalPool(async sql=>{
+  if(sql==='BEGIN'||sql==='ROLLBACK')return {rows:[]};
+  if(sql.startsWith('select * from trips t'))return {rows:[{...currentTrip,...changes}]};
+  if(sql.startsWith('select rr.'))return {rows:[roadRoute]};
+  throw Error('Consulta inesperada: '+sql);
+ });
+ const app=fakeApp();registerOperationsRoutes(app,pool);
+ const {res}=await invoke(app.route('patch','/api/operations/trips/:id/planned-route'));
+ assert.equal(res.statusCode,409);assert.equal(res.payload.code,'ITINERARY_LOCATION_CONFLICT');
+ assert.ok(!pool.calls.some(c=>/^(insert|update)/.test(c.sql)));
+});
+
 test('asocia ruta vial creando snapshot y actualizando el viaje transaccionalmente',async()=>{
-  const pool=transactionalPool(async(sql)=>{if(sql==='BEGIN'||sql==='COMMIT')return {rows:[]};if(sql.startsWith('select * from trips t'))return {rowCount:1,rows:[currentTrip]};if(sql.startsWith('select rr.* from road_routes'))return {rowCount:1,rows:[roadRoute]};if(sql.startsWith('insert into trip_route_snapshots'))return {rowCount:1,rows:[snapshot]};if(sql.startsWith('update trips set planned_route_snapshot_id'))return {rowCount:1,rows:[updatedTrip]};if(sql.startsWith('insert into audit_logs'))return {rowCount:1,rows:[]};throw new Error(`Consulta inesperada: ${sql}`)});
+  const pool=transactionalPool(async(sql)=>{if(sql==='BEGIN'||sql==='COMMIT')return {rows:[]};if(sql.startsWith('select * from trips t'))return {rowCount:1,rows:[currentTrip]};if(sql.startsWith('select rr.'))return {rowCount:1,rows:[roadRoute]};if(sql.startsWith('insert into trip_route_snapshots'))return {rowCount:1,rows:[snapshot]};if(sql.startsWith('update trips set planned_route_snapshot_id'))return {rowCount:1,rows:[updatedTrip]};if(sql.startsWith('insert into audit_logs'))return {rowCount:1,rows:[]};throw new Error(`Consulta inesperada: ${sql}`)});
   const app=fakeApp();registerOperationsRoutes(app,pool);
   const {res}=await invoke(app.route('patch','/api/operations/trips/:id/planned-route'));
   assert.equal(res.statusCode,200);assert.deepEqual(res.payload,{trip:updatedTrip,planned_route:snapshot});
   const tripLookup=pool.calls.find(call=>call.sql.startsWith('select * from trips t'));assert.match(tripLookup.sql,/t\.id=\$1 and t\.company_id=\$2 for update$/);assert.deepEqual(tripLookup.values,['21',10]);
   const routeLookup=pool.calls.find(call=>call.sql.startsWith('select rr.*'));assert.match(routeLookup.sql,/rr\.id=\$1 and rr\.company_id=\$2$/);assert.deepEqual(routeLookup.values,[31,10]);
   const insert=pool.calls.find(call=>call.sql.startsWith('insert into trip_route_snapshots'));assert.deepEqual(insert.values,[10,21,31,41,42,'500250.4','19800.5',roadRoute.geometry,'osrm','2026-08-18T18:00:00.000Z',5]);
-  const update=pool.calls.find(call=>call.sql.startsWith('update trips set planned_route_snapshot_id'));assert.deepEqual(update.values,[51,'500250.4',21,10]);
+  const update=pool.calls.find(call=>call.sql.startsWith('update trips set planned_route_snapshot_id'));assert.deepEqual(update.values,[51,'500250.4',21,10,41,42,null,null]);
   const audit=pool.calls.find(call=>call.sql.startsWith('insert into audit_logs'));assert.equal(audit.values[2],'plan_route');assert.equal(audit.values[3],'trip');assert.deepEqual(audit.values[5],currentTrip);assert.deepEqual(audit.values[6],{trip:updatedTrip,planned_route:snapshot});
   assert.ok(pool.calls.indexOf(insert)<pool.calls.indexOf(update));assert.ok(pool.calls.indexOf(update)<pool.calls.indexOf(audit));assert.ok(pool.calls.indexOf(audit)<pool.calls.findIndex(call=>call.sql==='COMMIT'));
 });
@@ -34,21 +47,21 @@ test('viaje inexistente o cross-company devuelve 404 sin consultar la ruta ni es
 });
 
 test('ruta vial inexistente o de otra empresa se rechaza antes del snapshot',async()=>{
-  const pool=transactionalPool(async(sql)=>{if(sql==='BEGIN'||sql==='ROLLBACK')return {rows:[]};if(sql.startsWith('select * from trips t'))return {rowCount:1,rows:[currentTrip]};if(sql.startsWith('select rr.* from road_routes'))return {rowCount:0,rows:[]};throw new Error(`Consulta inesperada: ${sql}`)});
+  const pool=transactionalPool(async(sql)=>{if(sql==='BEGIN'||sql==='ROLLBACK')return {rows:[]};if(sql.startsWith('select * from trips t'))return {rowCount:1,rows:[currentTrip]};if(sql.startsWith('select rr.'))return {rowCount:0,rows:[]};throw new Error(`Consulta inesperada: ${sql}`)});
   const app=fakeApp();registerOperationsRoutes(app,pool);
   const {res}=await invoke(app.route('patch','/api/operations/trips/:id/planned-route'));
   assert.equal(res.statusCode,404);assert.deepEqual(res.payload,{error:'Ruta vial no encontrada'});assert.equal(pool.calls.some(call=>call.sql.startsWith('insert into trip_route_snapshots')),false);assert.equal(pool.calls.some(call=>call.sql==='COMMIT'),false);
 });
 
 test('fallo al crear snapshot revierte sin actualizar viaje ni auditar',async()=>{
-  const pool=transactionalPool(async(sql)=>{if(sql==='BEGIN'||sql==='ROLLBACK')return {rows:[]};if(sql.startsWith('select * from trips t'))return {rowCount:1,rows:[currentTrip]};if(sql.startsWith('select rr.* from road_routes'))return {rowCount:1,rows:[roadRoute]};if(sql.startsWith('insert into trip_route_snapshots'))throw new Error('snapshot failure');throw new Error(`Consulta inesperada: ${sql}`)});
+  const pool=transactionalPool(async(sql)=>{if(sql==='BEGIN'||sql==='ROLLBACK')return {rows:[]};if(sql.startsWith('select * from trips t'))return {rowCount:1,rows:[currentTrip]};if(sql.startsWith('select rr.'))return {rowCount:1,rows:[roadRoute]};if(sql.startsWith('insert into trip_route_snapshots'))throw new Error('snapshot failure');throw new Error(`Consulta inesperada: ${sql}`)});
   const app=fakeApp();registerOperationsRoutes(app,pool);
   const {res}=await invoke(app.route('patch','/api/operations/trips/:id/planned-route'));
   assert.equal(res.statusCode,400);assert.equal(pool.calls.some(call=>call.sql==='ROLLBACK'),true);assert.equal(pool.calls.some(call=>call.sql.startsWith('update trips')),false);assert.equal(pool.calls.some(call=>call.sql.startsWith('insert into audit_logs')),false);assert.equal(pool.calls.some(call=>call.sql==='COMMIT'),false);
 });
 
 test('fallo de auditoría revierte snapshot y actualización del viaje',async()=>{
-  const pool=transactionalPool(async(sql)=>{if(sql==='BEGIN'||sql==='ROLLBACK')return {rows:[]};if(sql.startsWith('select * from trips t'))return {rowCount:1,rows:[currentTrip]};if(sql.startsWith('select rr.* from road_routes'))return {rowCount:1,rows:[roadRoute]};if(sql.startsWith('insert into trip_route_snapshots'))return {rowCount:1,rows:[snapshot]};if(sql.startsWith('update trips set planned_route_snapshot_id'))return {rowCount:1,rows:[updatedTrip]};if(sql.startsWith('insert into audit_logs'))throw new Error('audit failure');throw new Error(`Consulta inesperada: ${sql}`)});
+  const pool=transactionalPool(async(sql)=>{if(sql==='BEGIN'||sql==='ROLLBACK')return {rows:[]};if(sql.startsWith('select * from trips t'))return {rowCount:1,rows:[currentTrip]};if(sql.startsWith('select rr.'))return {rowCount:1,rows:[roadRoute]};if(sql.startsWith('insert into trip_route_snapshots'))return {rowCount:1,rows:[snapshot]};if(sql.startsWith('update trips set planned_route_snapshot_id'))return {rowCount:1,rows:[updatedTrip]};if(sql.startsWith('insert into audit_logs'))throw new Error('audit failure');throw new Error(`Consulta inesperada: ${sql}`)});
   const app=fakeApp();registerOperationsRoutes(app,pool);
   const {res}=await invoke(app.route('patch','/api/operations/trips/:id/planned-route'));
   assert.equal(res.statusCode,400);assert.equal(pool.calls.some(call=>call.sql==='ROLLBACK'),true);assert.equal(pool.calls.some(call=>call.sql==='COMMIT'),false);
