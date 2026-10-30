@@ -32,9 +32,9 @@ function registerFinancialSupportRoutes(app,pool,{storage}={}){
   return row;
  }
  route('get',BASE,false,async(req,res,cid,entity)=>{
-  const row=await target(pool,req.params.kind,entity,cid),column=targets[req.params.kind];
+  const row=await target(pool,req.params.kind,entity,cid);
   const inherited=req.params.kind==='source'?row.fuel_id:null;
-  const rows=(await pool.query(`select id,reference,notes,mime_type,size,created_at,created_by,fuel_id,cost_version_id,source_id,storage_key is not null has_file from financial_support_entries where company_id=$1 and (${column}=$2 or ($3::integer is not null and fuel_id=$3)) order by id desc limit 100`,[cid,entity,inherited])).rows;
+  const rows=(await pool.query(`select id,reference,notes,mime_type,size,created_at,created_by,fuel_id,cost_version_id,source_id,storage_key is not null has_file from financial_support_entries where company_id=$1 and id in (select entry_id from financial_support_links where company_id=$1 and kind=$3 and target_id=$2) order by id desc limit 100`,[cid,entity,req.params.kind])).rows;
   let reference=req.params.kind==='fuel'?row.receipt_reference:req.params.kind==='source'&&row.kind==='toll'?row.reference:null;
   if(inherited)reference=(await pool.query('select receipt_reference from fuel where id=$1 and company_id=$2',[inherited,cid])).rows[0]?.receipt_reference||null;
   res.set('Cache-Control','private, no-store').json({rows,reference,can_add:req.params.kind!=='cost'||row.finance_state!=='closed'&&String(row.current_version_id)===String(entity),legacy_declaration:req.params.kind==='cost'?row.support_status:null});
@@ -51,8 +51,8 @@ function registerFinancialSupportRoutes(app,pool,{storage}={}){
   }catch(e){try{await db.query('ROLLBACK')}catch{}if(uploaded)try{await store.delete(key)}catch{console.error('FINANCIAL_SUPPORT_COMPENSATION_FAILED')}throw e;}finally{db.release();}
  });
  route('get',BASE+'/:fileId',false,async(req,res,cid,entity)=>{
-  const row=await target(pool,req.params.kind,entity,cid),column=targets[req.params.kind],inherited=req.params.kind==='source'?row.fuel_id:null;
-  const file=(await pool.query(`select * from financial_support_entries where id=$1 and company_id=$2 and (${column}=$3 or ($4::integer is not null and fuel_id=$4))`,[id(req.params.fileId),cid,entity,inherited])).rows[0];
+  await target(pool,req.params.kind,entity,cid);
+  const file=(await pool.query(`select * from financial_support_entries where id=$1 and company_id=$2 and id in (select entry_id from financial_support_links where company_id=$2 and kind=$4 and target_id=$3)`,[id(req.params.fileId),cid,entity,req.params.kind])).rows[0];
   if(!file?.storage_key)throw fail(404,'Adjunto no encontrado');
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);timer.unref?.();let bytes;try{bytes=await verifiedBody(await (storage||createStorage()).get(file.storage_key,{signal:controller.signal}),file);}finally{clearTimeout(timer);}
   await writeAudit(pool,req,{companyId:cid,action:'download',entity:'financial_support',entityId:file.id,afterData:{kind:req.params.kind,target_id:entity}});

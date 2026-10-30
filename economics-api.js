@@ -109,7 +109,7 @@ function registerEconomicsRoutes(app,pool){
       const trip=await pool.query('select id from trips where id=$1 and company_id=$2',[req.params.id,cid]);
       if(!trip.rowCount)return res.sendStatus(404);
       const result=await pool.query(`select i.id,i.company_id,i.trip_id,i.status item_status,i.current_version_id,c.code category_code,c.name category_name,c.cost_group,
-        v.id version_id,v.version_number,v.cost_basis,v.amount_clp,v.amount_includes_vat,v.support_status,v.justification,v.description,v.effective_date,v.status
+        v.id version_id,v.version_number,v.cost_basis,v.amount_clp,v.amount_includes_vat,v.support_status,v.justification,v.description,v.effective_date,v.status,(select count(*)::int from financial_support_links sl join financial_support_entries se on se.id=sl.entry_id where sl.company_id=i.company_id and sl.kind='cost' and sl.target_id=v.id and se.storage_key is not null) attachment_count,(select count(*)::int from financial_support_links sl join financial_support_entries se on se.id=sl.entry_id where sl.company_id=i.company_id and sl.kind='cost' and sl.target_id=v.id and se.storage_key is null) reference_count,(select s.fuel_id from economic_source_allocations a join economic_sources s on s.id=a.source_id and s.company_id=a.company_id where a.cost_item_id=i.id and a.company_id=i.company_id and not exists(select 1 from economic_source_reversals r where r.allocation_id=a.id) limit 1) fuel_id
         from trip_cost_items i join economic_cost_categories c on c.id=i.category_id
         join trip_cost_versions v on v.id=i.current_version_id and v.trip_cost_item_id=i.id and v.company_id=i.company_id
         where i.trip_id=$1 and i.company_id=$2 order by i.id desc`,[req.params.id,cid]);

@@ -33,8 +33,22 @@ test('web combustible: pendiente no es cero, registro único, referencia/archivo
   await page.locator('[name=liters]').fill('40');await page.locator('[name=odometer_km]').fill('1300');await page.locator('[name=price_clp]').fill('1200');
   await page.locator('#form').getByRole('button',{name:'Guardar',exact:true}).click();await page.locator('#modal').waitFor({state:'hidden'});
   assert.equal(await page.evaluate(()=>writes.at(-1).body.trip_id),9);assert.equal(await page.evaluate(()=>openedFuelTrip),9);
+  await page.evaluate(()=>openCompleteFuelCost({id:9,truck_id:3},{id:11,version_id:12,amount_clp:65000,effective_date:'2026-10-30',description:'Carga QA'}));
+  assert.match(await page.locator('#form').innerText(),/No se crea otro costo/);
+  await page.locator('#form [name=liters]').fill('50');await page.locator('#form [name=odometer_km]').fill('1400');
+  await page.locator('#form').getByRole('button',{name:'Guardar',exact:true}).click();await page.locator('#modal').waitFor({state:'hidden'});
+  const completion=await page.evaluate(()=>writes.at(-1));assert.equal(completion.url,'/api/fleet/fuel/from-cost/11');assert.equal(completion.body.expected_version_id,12);assert.equal(completion.body.liters,50);assert.equal('amount_clp' in completion.body,false);assert.equal('price_clp' in completion.body,false);
   // Existing economic form keeps wire values but presents Spanish labels and no false document declaration.
-  const source=require('node:fs').readFileSync(path.join(__dirname,'../public/operations-ui.js'),'utf8');assert.match(source,/<option value="planned">Presupuestado<\/option>/);assert.match(source,/<option value="observed">Gasto registrado<\/option>/);assert.match(source,/<option value="allocated">Imputado al viaje<\/option>/);assert.doesNotMatch(source,/<option value="documented">Documentado/);
+  const source=require('node:fs').readFileSync(path.join(__dirname,'../public/operations-ui.js'),'utf8');assert.match(source,/<option value="planned">Presupuestado<\/option>/);assert.match(source,/<option value="observed">Gasto registrado<\/option>/);assert.match(source,/<option value="allocated">Imputado al viaje<\/option>/);assert.doesNotMatch(source,/<option value="documented">Documentado/);assert.match(source,/if\(redirectFuel\(\)\)return/);assert.match(source,/Completar abastecimiento/);assert.match(source,/attachment_count/);
+  const begin=source.indexOf('function showDirectCostForm('),end=source.indexOf('\nwindow.tripTab=',begin);
+  assert.ok(begin>=0&&end>begin);
+  await page.addScriptTag({content:source.slice(begin,end)});
+  await page.evaluate(()=>{window.hasPermission=()=>true;window.fuelRouteCalls=[];window.openFuelForm=async trip=>fuelRouteCalls.push(trip.id);showDirectCostForm({id:9,truck_id:3});});
+  await page.locator('#economicCostForm [name=category_code]').selectOption('fuel');
+  assert.deepEqual(await page.evaluate(()=>fuelRouteCalls),[9]);assert.equal(await page.locator('#economicCostForm').count(),0);
+  await page.evaluate(()=>showDirectCostForm({id:9,truck_id:3}));
+  await page.locator('#economicCostForm [name=cost_basis]').selectOption('planned');await page.locator('#economicCostForm [name=category_code]').selectOption('fuel');
+  assert.equal(await page.locator('#economicCostForm').count(),1);assert.deepEqual(await page.evaluate(()=>fuelRouteCalls),[9]);
   assert.deepEqual(errors,[]);
  }finally{await browser.close();}
 });

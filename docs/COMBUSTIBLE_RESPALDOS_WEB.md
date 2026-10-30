@@ -46,6 +46,35 @@ el importe original ni se libera saldo como efecto secundario de una corrección
 
 ## Costos y respaldos
 
+### Ingreso unificado y gastos anteriores
+
+En **Economía > Nuevo costo**, seleccionar combustible real abre el formulario
+de abastecimiento del viaje. Combustible presupuestado permanece como presupuesto.
+El vehículo del viaje debe estar asignado; no se inventan litros, kilometraje ni precios.
+
+Un gasto manual anterior ofrece **Completar abastecimiento** en Economía y en
+Control económico. Conserva el mismo costo, importe y versión, exige fecha real,
+litros y odómetro, permite confirmar el camión de la empresa y calcula el precio
+unitario como importe existente dividido por litros declarados. No es un precio
+extraído automáticamente del comprobante. El reconocimiento de un borrador se
+registra con autor y auditoría, sin aprobar masivamente otros registros históricos.
+
+Se rechazan presupuestos, importes cero, anulados, autorizaciones pendientes,
+versiones obsoletas, cierres económicos y costos con origen/historial de asignación.
+La operación es transaccional: no duplica costos ni deja abastecimientos parciales.
+Un reintento después del éxito se rechaza como ya vinculado.
+
+La migración **047_fuel_support_links.sql** crea una vista de relaciones de respaldo:
+los archivos originales no se mueven, duplican ni cambian sus metadatos. Los adjuntos
+del costo son consultables desde el abastecimiento vinculado y viceversa, sujetos a
+los permisos de cada módulo y a la empresa autorizada. Las pantallas muestran los
+adjuntos reales, no la antigua declaración `support_status`. Combustible muestra el
+viaje vinculado. Las fotografías de versiones anteriores son accesibles desde el
+abastecimiento mientras el vínculo esté activo y desde el historial del costo.
+
+No se convierten automáticamente costos históricos: faltan datos físicos que
+debe declarar el operador. No hay SQL manual ni cambios de datos en producción.
+
 - **Presupuestado:** importe previsto, no gasto ejecutado.
 - **Gasto registrado:** gasto ocurrido.
 - **Imputado al viaje:** parte de un gasto atribuida al servicio.

@@ -20,6 +20,7 @@ MIGRATION_FILES.push('043_operational_location_picker.sql');
 MIGRATION_FILES.push('044_seed_ine_localities_2024.sql');
 MIGRATION_FILES.push('045_ors_request_budget.sql');
 MIGRATION_FILES.push('046_fuel_financial_support.sql');
+MIGRATION_FILES.push('047_fuel_support_links.sql');
 
 function timeoutMs(value,fallback){
   const parsed=Number(value);
