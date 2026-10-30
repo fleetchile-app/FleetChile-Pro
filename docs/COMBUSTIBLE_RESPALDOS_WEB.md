@@ -15,10 +15,34 @@
    en CLP y se redondea al peso; no se recalculan registros históricos automáticamente.
 
 Una carga pendiente no se ofrece como origen económico. Al completarla, se puede
-vincular desde **Viaje > Control económico > Registrar origen combustible**.
+vincular desde **Viaje > Control económico > Vincular abastecimiento existente**.
 Si ya tiene un origen económico, no se permite modificar silenciosamente su importe.
 La asignación posterior puede distribuir ese origen entre viajes sin exceder el saldo.
-Registrar combustible no crea automáticamente otro costo manual del viaje.
+Desde **Viaje > Control económico > Registrar abastecimiento en este viaje**,
+el sistema registra abastecimiento, origen, costo e imputación en una transacción.
+El camión debe corresponder al viaje y el precio debe conocerse. Si el cierre está
+cerrado o falla la auditoría, no se guarda una parte del proceso.
+Desde **Registrar comprobante TAG / peaje**, el comprobante también se imputa
+al viaje actual en el mismo guardado. No repitas un gasto ya registrado manualmente.
+
+## Registro administrativo sin aprobación adicional
+
+Los nuevos gastos reales de combustible y peajes (no presupuestos), ingresados
+con `economics.manage`, quedan reconocidos al guardar. Para conservar compatibilidad
+con reportes y cierre se usa el estado técnico `reconciled`, registrando responsable,
+fecha y razón de registro directo: no representa cotejo con un comprobante ni bancario.
+No se exige adjunto. El ingreso de otras categorías conserva su autorización anterior.
+Un abastecimiento independiente de un viaje no crea por sí solo costos de viajes.
+
+Los gastos manuales también aparecen en la sección de combustible/peajes, sin
+inventar un origen operativo ni duplicar importes. Los registros históricos no se
+aprueban masivamente: para regularizar un borrador se crea una nueva versión.
+
+**Corregir gasto / registrar existente** requiere motivo y la versión vigente,
+conserva el importe anterior, autor y respaldos. **Historial y respaldos anteriores**
+permite consultarlos. Un formulario obsoleto se rechaza. Los orígenes económicos ya
+distribuidos conservan sus restricciones de integridad: no se cambia silenciosamente
+el importe original ni se libera saldo como efecto secundario de una corrección.
 
 ## Costos y respaldos
 
@@ -48,5 +72,8 @@ las descargas verifican tamaño y SHA-256. No se publican URLs ni claves de obje
 Los archivos se descargan como adjuntos, no se ejecutan o muestran como HTML.
 Se incluyen metadatos y adjuntos en la exportación empresarial.
 
-La aplicación Android, sus permisos y su paquete no cambian en esta etapa. El
-registro móvil de combustible se implementará después de validar la versión web.
+La aplicación Android, sus permisos y su paquete no cambian en esta etapa, de acuerdo
+con el despliegue separado solicitado. La siguiente etapa debe exigir foto del
+comprobante al conductor, cualquiera sea el medio de pago, vincularlo al viaje y
+mostrarlo en administración sin aprobación adicional. Se implementará después de
+validar la versión web; ese flujo móvil todavía no está disponible.

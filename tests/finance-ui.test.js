@@ -16,3 +16,17 @@ test('cierre exige contraseña y motivo, no cambia el estado operacional y limpi
 test('sin permiso no dibuja controles y respuesta de contexto anterior se descarta',async()=>{const denied=surface(undefined,[]);await denied.open();assert.equal(denied.calls.length,0);let release;const s=surface(()=>new Promise(r=>{release=r;})),pending=s.open();await new Promise(r=>setImmediate(r));s.state.Auth.token='B';release(structuredClone(data));await pending;assert.doesNotMatch(s.panel.innerHTML,/Presupuesto y ejecución/);});
 test('error de versión conserva formulario sin fingir cierre ni registrar secretos en otra ruta',async()=>{const s=surface((u,o)=>{if(o.method==='POST')throw Error('La ficha económica cambió');});await s.open();await s.click('close');await s.submit({reason:'Prueba',password:'secreto'});assert.match(s.elements.form.querySelector('[role=alert]').textContent,/cambió/);assert.equal(s.elements.form.querySelector('[type=submit]').disabled,false);});
 test('carga al final de SPA conserva envoltorios de itinerario y recursos',()=>{const html=fs.readFileSync(require.resolve('../public/index.html'),'utf8');assert.ok(html.indexOf('itinerary.js')<html.indexOf('finance.js'));assert.match(html,/finance.css/);});
+
+test('combustible manual aparece también entre gastos de combustible sin exigir otro costo ni aprobación',async()=>{
+ const s=surface();await s.open();assert.match(s.panel.innerHTML,/Gasto manual del viaje/);assert.match(s.panel.innerHTML,/Sin origen operativo asociado/);assert.doesNotMatch(s.panel.innerHTML,/data-finance="request-approval"/);assert.match(s.panel.innerHTML,/Historial y respaldos anteriores/);
+});
+
+test('comprobante de peaje lleva viaje y versión para registro e imputación atómicos',async()=>{
+ const s=surface();await s.open();await s.click('toll-source');await s.submit({provider:'Peaje QA',reference:'QA-1',occurred_on:'2026-10-30',amount_clp:'3500',vat:'',description:'Peaje del viaje'});
+ const b=JSON.parse(writes(s)[0].o.body);assert.equal(b.trip_id,1);assert.equal(b.finance_version,7);assert.equal(b.amount_clp,3500);assert.equal(b.includes_vat,null);assert.equal(writes(s).length,1);
+});
+
+test('corrección conserva versión esperada y motivo sin exigir una declaración documental',async()=>{
+ const s=surface();await s.open();await s.click('cost-version','11');await s.submit({amount:'1800',basis:'observed',vat:'true',reason:'Corregir digitación'});
+ const b=JSON.parse(writes(s)[0].o.body);assert.equal(b.expected_version_id,12);assert.equal(b.justification,'Corregir digitación');assert.equal(b.support_status,null);assert.equal(b.amount_clp,1800);
+});

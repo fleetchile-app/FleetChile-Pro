@@ -39,11 +39,38 @@ test('combustible web y respaldos: valoración pendiente, orígenes únicos, adj
    assert.equal((await call('patch','/api/fleet/fuel/:id/valuation',{params:p,body:{price_clp:1200,version:1,reason:'Importe ya vinculado'}})).code,409);
    const supports=await call('get','/api/financial-support/:kind/:id',{params:{kind:'source',id:sourceId}});assert.equal(supports.body.rows.length,2);assert.equal(supports.body.reference,'VALE-123');
   });
+await t.test('registro administrativo del viaje crea combustible, costo reconocido y origen en un paso sin exigir archivo',async()=>{
+   const r=await call('post','/api/fleet/fuel',{body:{trip_id:Number(trip),truck_id:truck,liters:50,price_clp:1000,odometer_km:1500,date:'2026-10-30'}});
+   assert.equal(r.code,201,JSON.stringify(r.body));assert.ok(r.body.economic_link);
+   const linked=await one('select v.* from trip_cost_items i join trip_cost_versions v on v.id=i.current_version_id where i.id=$1',[r.body.economic_link.cost_item_id]);assert.equal(linked.status,'reconciled');assert.equal(String(linked.reconciled_by),String(uid));assert.equal(Number(linked.amount_clp),50000);
+   assert.equal((await one('select count(*) n from financial_support_entries where fuel_id=$1',[r.body.id])).n,0);
+   const before=(await one('select count(*) n from fuel')).n;
+   const forbidden=await call('post','/api/fleet/fuel',{user:{...actor,permissions:['fuel.manage']},body:{trip_id:Number(trip),truck_id:truck,liters:50,price_clp:1000,odometer_km:1500}});assert.equal(forbidden.code,403);assert.equal((await one('select count(*) n from fuel')).n,before);
+   const foreign=await call('post','/api/fleet/fuel',{body:{trip_id:999999,truck_id:truck,liters:50,price_clp:1000,odometer_km:1500}});assert.equal(foreign.code,409);assert.equal((await one('select count(*) n from fuel')).n,before);
+   breakAudit=true;const failed=await call('post','/api/fleet/fuel',{body:{trip_id:Number(trip),truck_id:truck,liters:50,price_clp:1000,odometer_km:1500}});breakAudit=false;assert.notEqual(failed.code,201);assert.equal((await one('select count(*) n from fuel')).n,before);
+  });
+  await t.test('peaje directo crea vínculo; gasto manual y correcciones se reconocen sin aprobaciones, sin sobrescribir ni aceptar versión obsoleta',async()=>{
+   const control=await one('select version from trip_finance_control where trip_id=$1',[trip]);
+   const toll=await call('post','/api/economics/sources',{body:{trip_id:Number(trip),finance_version:Number(control.version),kind:'toll',provider:'Peaje QA',reference:'TOLL-DIRECT-QA',occurred_on:'2026-10-30',amount_clp:3500,includes_vat:null,description:'Peaje registrado por administración'}});
+   assert.equal(toll.code,201,JSON.stringify(toll.body));assert.ok(toll.body.economic_link);
+   const r=await call('post','/api/economics/trips/:id/costs',{params:{id:trip},body:{category_code:'fuel',amount_clp:65000,cost_basis:'observed',support_status:null,description:'Gasto manual QA'}});
+   assert.equal(r.code,201,JSON.stringify(r.body));assert.equal(r.body.status,'reconciled');const item=r.body.item_id,old=r.body.current_version_id;
+   const photo=await call('post','/api/financial-support/:kind/:id',{params:{kind:'cost',id:old},body:{file:data}});assert.equal(photo.code,201);
+   const payload={amount_clp:60000,cost_basis:'observed',support_status:null,justification:'Corregir digitación',description:'Monto corregido',expected_version_id:Number(old)};
+   const correction=await call('post','/api/economics/costs/:id/versions',{params:{id:item},body:payload});assert.equal(correction.code,201,JSON.stringify(correction.body));assert.equal(correction.body.status,'reconciled');
+   const prior=await one('select * from trip_cost_versions where id=$1',[old]);assert.equal(Number(prior.amount_clp),65000);assert.equal(Number(correction.body.amount_clp),60000);
+   assert.equal((await call('post','/api/economics/costs/:id/versions',{params:{id:item},body:payload})).code,409);
+   assert.equal((await call('get','/api/financial-support/:kind/:id/:fileId',{params:{kind:'cost',id:old,fileId:photo.body.id}})).code,200);
+   const history=await call('get','/api/economics/costs/:id',{params:{id:item}});assert.equal(history.body.length,2);assert.equal(String(history.body[0].created_by),String(uid));assert.equal(history.body[0].justification,payload.justification);
+   const budget=await call('post','/api/economics/trips/:id/costs',{params:{id:trip},body:{category_code:'fuel',amount_clp:60000,cost_basis:'planned',description:'Presupuesto no ejecutado'}});assert.equal(budget.body.status,'draft');
+  });
   await t.test('costo sin declaración documental y respaldos por versión, sin cambiar aprobaciones',async()=>{
    const r=await call('post','/api/economics/trips/:id/costs',{params:{id:trip},body:{category_code:'other_direct',amount_clp:500,cost_basis:'observed',support_status:null,description:'Gasto QA'}});assert.equal(r.code,201,JSON.stringify(r.body));cost=r.body;const version=cost.current_version_id;
    assert.equal((await call('post','/api/financial-support/:kind/:id',{params:{kind:'cost',id:version},body:{reference:'REF-QA'}})).code,201);
    const before=await one('select * from trip_cost_versions where id=$1',[version]);assert.equal(before.support_status,null);assert.equal(before.status,'draft');
-   await query("update trip_finance_control set state='closed' where trip_id=$1",[trip]);assert.equal((await call('post','/api/financial-support/:kind/:id',{params:{kind:'cost',id:version},body:{reference:'NO-CERRADO'}})).code,409);
+   await query("update trip_finance_control set state='closed' where trip_id=$1",[trip]);
+   const count=(await one('select count(*) n from fuel')).n;assert.equal((await call('post','/api/fleet/fuel',{body:{trip_id:Number(trip),truck_id:truck,liters:50,price_clp:1000,odometer_km:1500}})).code,409);assert.equal((await one('select count(*) n from fuel')).n,count);
+   assert.equal((await call('post','/api/financial-support/:kind/:id',{params:{kind:'cost',id:version},body:{reference:'NO-CERRADO'}})).code,409);
   });
   await t.test('auditoría fallida revierte metadatos y compensa el objeto; constraints multiempresa',async()=>{
    const n=objects.size;breakAudit=true;assert.equal((await call('post','/api/financial-support/:kind/:id',{params:{kind:'fuel',id:fuel.id},body:{file:data}})).code,503);breakAudit=false;assert.equal(objects.size,n);

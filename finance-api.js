@@ -26,7 +26,7 @@ async function view(db,cid,tripId){
  if(summary.pending_items||pendingAuth)blockers.push('Hay costos o autorizaciones pendientes');if(costs.rows.some(c=>F.recognized(c)&&c.status!=='reconciled'))blockers.push('Hay costos reconocidos sin conciliar');
  if(p?.tag_pending)blockers.push('Hay TAG o peajes pendientes');
  if(loads.rows.length>1&&(!latest||latest.basis_hash!==basisHash))blockers.push('Falta distribución vigente por carga/cliente');
- return {trip:{id:trip.id,trip_number:trip.trip_number,status:trip.status},control:await control(db,cid,tripId),profile:p,summary,costs:costs.rows,loads:loads.rows,budgets:budgets.rows,comparison,distributions:distributions.rows,distribution_stale:!!latest&&latest.basis_hash!==basisHash,basis,basis_hash:basisHash,sources:sources.rows,events:events.rows,authorizations,close_blockers:blockers};
+ return {trip:{id:trip.id,trip_number:trip.trip_number,status:trip.status,truck_id:trip.truck_id},control:await control(db,cid,tripId),profile:p,summary,costs:costs.rows,loads:loads.rows,budgets:budgets.rows,comparison,distributions:distributions.rows,distribution_stale:!!latest&&latest.basis_hash!==basisHash,basis,basis_hash:basisHash,sources:sources.rows,events:events.rows,authorizations,close_blockers:blockers};
 }
 function registerFinanceRoutes(app,pool){
  const route=(method,path,permission,work)=>app[method](path,requirePermission(permission),async(req,res)=>{try{await work(req,res,company(req));}catch(e){res.status(e.status||(e.code==='23505'||e.code==='55000'?409:500)).json({code:e.code||'FINANCE_ERROR',error:e.status?e.message:e.code==='23505'?'El registro ya existe; recarga para evitar duplicarlo':e.code==='55000'?e.message:'No se pudo procesar la operación económica'});}});
@@ -88,6 +88,8 @@ function registerFinanceRoutes(app,pool){
   const b=req.body||{};if(!['fuel','toll'].includes(b.kind))throw E.fail('Origen no válido');if(b.includes_vat!==true&&b.includes_vat!==false&&b.includes_vat!==null)throw E.fail('Indica la condición de IVA');
   res.status(201).json(await transaction(async db=>{
    let fuel=null,amount,truckId,date,provider,reference,original;
+   const directTrip=b.trip_id==null?null:E.id(b.trip_id,'Viaje');
+   if(directTrip)open(await control(db,cid,directTrip,true),b.finance_version);
    if(b.kind==='fuel'){
     fuel=(await db.query('select * from fuel where id=$1 and company_id=$2 for update',[E.id(b.fuel_id,'Carga de combustible'),cid])).rows[0];if(!fuel)throw E.fail('Registro de combustible no encontrado',404);
     if(fuel.total_clp===null)throw E.fail('Completa la valoración del combustible antes de crear su origen económico',409);amount=F.money(fuel.total_clp);truckId=fuel.truck_id;date=fuel.date;provider='fuel';reference=String(fuel.id);original={fuel_id:fuel.id,date:fuel.date,truck_id:fuel.truck_id,total_clp:fuel.total_clp,liters:fuel.liters,station:fuel.station};
@@ -98,7 +100,8 @@ function registerFinanceRoutes(app,pool){
    }
    if(truckId&&!(await db.query('select id from trucks where id=$1 and company_id=$2',[truckId,cid])).rows.length)throw E.fail('Vehículo ajeno a la empresa',403);
    const row=(await db.query('insert into economic_sources(company_id,kind,provider,reference,fuel_id,truck_id,occurred_on,amount_clp,includes_vat,description,original,created_by) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning *',[cid,b.kind,provider,reference,fuel?.id||null,truckId,date,amount,b.includes_vat,E.text(b.description,'Descripción y respaldo',2000),original,req.user.id])).rows[0];
-   await writeAudit(db,req,{companyId:cid,action:'create',entity:'economic_source',entityId:row.id,afterData:row});return row;
+   const link=directTrip?await require('./fuel-cost-policy').linkSource(db,req,row,directTrip):null;
+   await writeAudit(db,req,{companyId:cid,action:'create',entity:'economic_source',entityId:row.id,afterData:row});return {...row,...(link?{economic_link:link}:{})};
   }));
  });
  route('post',SOURCES+'/:sourceId/allocate','economics.manage',async(req,res,cid)=>{
@@ -111,7 +114,8 @@ function registerFinanceRoutes(app,pool){
    if(b.cost_item_id)itemId=E.id(b.cost_item_id,'Costo existente');else{
     const cat=(await db.query('select id from economic_cost_categories where code=$1 and active=true',[source.kind])).rows[0];if(!cat)throw E.fail('Categoría inactiva',409);
     const item=(await db.query("insert into trip_cost_items(company_id,trip_id,category_id,created_by) values($1,$2,$3,$4) returning *",[cid,tripId,cat.id,req.user.id])).rows[0];itemId=item.id;
-    const version=(await db.query("insert into trip_cost_versions(company_id,trip_cost_item_id,version_number,cost_basis,amount_clp,amount_includes_vat,support_status,justification,description,status,created_by) values($1,$2,1,'allocated',$3,$4,'undocumented',$5,$6,'draft',$7) returning id",[cid,itemId,amount,source.includes_vat,reason,source.description,req.user.id])).rows[0];
+    const version=(await db.query("insert into trip_cost_versions(company_id,trip_cost_item_id,version_number,cost_basis,amount_clp,amount_includes_vat,support_status,justification,description,status,created_by) values($1,$2,1,'allocated',$3,$4,null,$5,$6,'draft',$7) returning *",[cid,itemId,amount,source.includes_vat,reason,source.description,req.user.id])).rows[0];
+    await require('./fuel-cost-policy').recognize(db,req,version,source.kind);
     await db.query('update trip_cost_items set current_version_id=$1 where id=$2',[version.id,itemId]);
    }
    const item=(await db.query('select * from trip_cost_items where id=$1 and trip_id=$2 and company_id=$3 for update',[itemId,tripId,cid])).rows[0];if(!item||item.status==='voided')throw E.fail('Costo no disponible en este viaje',403);

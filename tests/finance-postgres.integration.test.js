@@ -34,10 +34,11 @@ test('PL25–PL29 PostgreSQL aislado: fuentes, presupuestos, reparto, conciliaci
    const r=await run(f,'post','/api/economics/trips/:id/costs',{amount_clp:amount,amount_includes_vat:true,cost_basis:basis,category_code:category,support_status:'undocumented',justification:'Fixture sin documento real'},{id:f.trip.id});assert.equal(r.statusCode,201,JSON.stringify(r.payload));return r.payload;
   }
   async function approve(f,c){
+   if(c.status==='reconciled'){assert.ok(c.reconciled_by);return;}
    let r=await run(f,'post','/api/economics/authorizations',{trip_id:Number(f.trip.id),request_type:'cost_version',cost_version_id:Number(c.version_id||c.id),reason:'Verificar costo fixture'});assert.equal(r.statusCode,201,JSON.stringify(r.payload));
    const request=r.payload;r=await run({...f,actor:f.approver},'post','/api/economics/authorizations/:id/approve',{reason:'Verificado fixture',password:'fixture-password'},{id:request.id});assert.equal(r.statusCode,200,JSON.stringify(r.payload));return request;
   }
-  async function reconcile(f,itemId){const r=await run(f,'post','/api/economics/costs/:id/reconcile',{reason:'Conciliación fixture'},{id:itemId});assert.equal(r.statusCode,201,JSON.stringify(r.payload));return r.payload;}
+  async function reconcile(f,itemId){const current=await one('select v.* from trip_cost_items i join trip_cost_versions v on v.id=i.current_version_id where i.id=$1',[itemId]);if(current.status==='reconciled')return current;const r=await run(f,'post','/api/economics/costs/:id/reconcile',{reason:'Conciliación fixture'},{id:itemId});assert.equal(r.statusCode,201,JSON.stringify(r.payload));return r.payload;}
   async function sourceRecord(f,amount=2000){const r=await run(f,'post',SOURCES,{kind:'toll',provider:'Proveedor fixture',reference:'REF-'+ ++serial,occurred_on:'2026-10-25',amount_clp:amount,includes_vat:true,description:'Comprobante fixture'});assert.equal(r.statusCode,201,JSON.stringify(r.payload));return r.payload;}
 
   await t.test('migración aditiva idempotente preserva importes y no inventa costos o repartos',async()=>{
@@ -49,7 +50,7 @@ test('PL25–PL29 PostgreSQL aislado: fuentes, presupuestos, reparto, conciliaci
    for(const r of [d,report,k])assert.equal(r.statusCode,200,JSON.stringify(r.payload));
    assert.equal(s.summary.delta_clp,8000);assert.equal(d.payload.delta,8000);assert.equal(report.payload.rows[0].delta,8000);assert.equal(k.payload.economics.delta.reconciled,8000);
    const csv=await run(f,'get','/api/economics/reports',{}, {},{report:'economic',format:'csv'});assert.match(csv.payload,/8000/);
-   const draft=await cost(f,0);const reports=await run(f,'get','/api/economics/reports',{}, {},{report:'economic'}),kp=await run(f,'get','/api/economics/kpis');assert.equal(reports.payload.rows[0].delta_status,'provisional');assert.equal(kp.payload.economics.delta.provisional,8000);
+   const draft=await cost(f,0,'observed','other_direct');const reports=await run(f,'get','/api/economics/reports',{}, {},{report:'economic'}),kp=await run(f,'get','/api/economics/kpis');assert.equal(reports.payload.rows[0].delta_status,'provisional');assert.equal(kp.payload.economics.delta.provisional,8000);
   });
   await t.test('presupuesto se versiona aparte; valores no comparables no generan variación inventada',async()=>{
    const f=await fixture();await revenue(f);const c=await cost(f);await approve(f,c);await reconcile(f,c.item_id);let s=await state(f);

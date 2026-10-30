@@ -118,9 +118,9 @@ test('aceptación integrada: sesiones, prepago, tres entregas, incidentes, talle
    initial=await admin('get',FIN,{}, {id:trip.id});
    const allocation=await admin('post','/api/economics/sources/:sourceId/allocate',{trip_id:Number(trip.id),version:Number(initial.control.version),source_version:0,amount_clp:2000,reason:'Combustible consumido por este servicio'},{sourceId:source.id},201);
    const item=await h.one('select id item_id,current_version_id version_id from trip_cost_items where id=$1',[allocation.cost_item_id]),cost=item;
-   const request=await admin('post','/api/economics/authorizations',{trip_id:Number(trip.id),request_type:'cost_version',cost_version_id:Number(cost.version_id||cost.id),reason:'Revisión del gasto sintético'},{},201);
-   await ok(a.approver.token,'post','/api/economics/authorizations/:id/approve',{reason:'Aprobación independiente sintética',password:h.password},{id:request.id});
-   await admin('post','/api/economics/costs/:id/reconcile',{reason:'Conciliación sintética'},{id:cost.item_id},201);
+   const registered=await h.one('select status,reconciled_by from trip_cost_versions where id=$1',[cost.version_id]);
+   assert.equal(registered.status,'reconciled');assert.equal(Number(registered.reconciled_by),a.admin.id);
+   assert.equal((await call(a.admin.token,'post','/api/economics/authorizations',{trip_id:Number(trip.id),request_type:'cost_version',cost_version_id:Number(cost.version_id),reason:'No requiere aprobación duplicada'})).statusCode,409);
    let state=await admin('get',FIN,{}, {id:trip.id});assert.equal(state.summary.delta_clp,8000);
    const report=await h.run(a.admin.token,'get','/api/economics/reports',{query:{report:'economic'}});assert.equal(report.statusCode,200);const reported=report.payload.rows.find(r=>String(r.trip_id)===String(trip.id));assert.ok(reported,'El reporte debe contener el viaje específico, no otro registro');assert.equal(reported.delta,8000);
    const dashboard=await admin('get','/api/economics/kpis');assert.equal(dashboard.economics.delta.reconciled,8000);assert.equal(dashboard.economics.recognized_revenue.amount,10000);
