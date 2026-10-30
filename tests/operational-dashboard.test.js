@@ -175,3 +175,29 @@ test('textos de API se escapan y no se interpolan identificadores ejecutables',a
  const s=surface({responses:{'/api/trips':[trip('1);alert(1)','Detenido',{trip_number:'<script>ataque</script>'})],'/api/alerts':[{title:'<img onerror=ataque>',text:'<script>ataque</script>',resolved:false}]}});
  await s.context.controlDashboard();assert.doesNotMatch(s.root.innerHTML,/<script>|<img onerror|onclick="window.openTrip\(1\);/);assert.match(s.root.innerHTML,/&lt;script&gt;/);
 });
+
+test('cada indicador abre su detalle; cero conserva una lista vacía verificable',async()=>{
+ const s=surface();await s.context.controlDashboard();
+ assert.equal((s.root.innerHTML.match(/aria-controls="operationalDetail"/g)||[]).length,6);
+ for(const mode of ['all','transit','stopped','missing','alerts','gps']){
+  s.context.openOperationalIndicator(mode);assert.equal(s.elements.operationalDetail.hidden,false);assert.match(s.elements.operationalDetail.innerHTML,/Volver al resumen/);
+ }
+ assert.match(s.elements.operationalDetail.innerHTML,/0 con señal reciente de 0/);
+ s.context.closeOperationalDetail();assert.equal(s.elements.operationalDetail.hidden,true);
+});
+
+test('detalle no consulta de nuevo ni permite abrir una fuente denegada',async()=>{
+ const s=surface({responses:{'/api/trips':{error:'Sin permiso',status:403},'/api/fleet/live':{error:'Sin permiso',status:403},'/api/alerts':{error:'Sin permiso',status:403}}});await s.context.controlDashboard();
+ for(const mode of ['all','transit','stopped','missing','alerts','gps','invalido'])s.context.openOperationalIndicator(mode);
+ assert.equal(s.elements.operationalDetail.hidden,true);assert.equal(s.requests.length,3);
+});
+
+test('refresco conserva selección y muestra fallo explícito sin reutilizar datos anteriores',async()=>{
+ const responses={'/api/trips':[trip(1,'Detenido')]},s=surface({responses});await s.context.controlDashboard();s.context.openOperationalIndicator('stopped');assert.match(s.elements.operationalDetail.innerHTML,/V-1/);
+ responses['/api/trips']={error:'No disponible',status:503};await s.context.controlDashboard();assert.match(s.elements.operationalDetail.innerHTML,/Viajes no disponibles/);assert.doesNotMatch(s.elements.operationalDetail.innerHTML,/V-1/);
+});
+
+test('detalle de alarmas escapa texto y descarta identificadores ejecutables',async()=>{
+ const s=surface({responses:{'/api/alerts':[{title:'<script>ataque</script>',text:'<img onerror=ataque>',source_type:'truck',source_id:'1);alert(1)',resolved:false}]}});await s.context.controlDashboard();s.context.openOperationalIndicator('alerts');
+ assert.match(s.elements.operationalDetail.innerHTML,/&lt;script&gt;/);assert.doesNotMatch(s.elements.operationalDetail.innerHTML,/<script>|<img|onclick="openTruck/);
+});

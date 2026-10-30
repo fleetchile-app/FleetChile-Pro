@@ -9,6 +9,16 @@ header .header-company small{font-size:10px;letter-spacing:normal;font-weight:40
 header #companyContextControl{display:block}
 .operational-kpis{grid-template-columns:repeat(6,minmax(0,1fr))}
 .operational-counter{font:inherit;text-align:left;cursor:pointer}
+.operational-counter .operational-action{color:#0f67a9;font-weight:700;margin-top:7px}
+.operational-counter:hover:not(:disabled){border-color:#1670b8;background:#f4f8fb}
+.operational-counter:focus-visible,.operational-detail button:focus-visible{outline:3px solid #1670b8;outline-offset:3px}
+.operational-counter:disabled{cursor:default;opacity:.65}
+.operational-detail{margin:16px 0;scroll-margin-top:110px;min-width:0}
+.operational-detail[hidden]{display:none}
+.operational-detail .section-head{flex-wrap:wrap;gap:12px}
+.operational-detail-filters{display:flex;flex-wrap:wrap;gap:8px}
+.operational-detail-filters [aria-pressed=true]{border-color:#1670b8;background:#e7f0fa}
+.operational-detail .fleet-status-row,.operational-detail .control-trip-row{width:100%}
 .operational-counter.selected{border-color:#1670b8;box-shadow:inset 0 0 0 1px #1670b8}
 .operational-error{padding:10px;border:1px solid #f2d8ae;background:#fff6e9;color:#8a5a08;border-radius:6px;font-size:12px}
 #operationalDashboard .control-head p{margin-top:6px;line-height:1.5}
