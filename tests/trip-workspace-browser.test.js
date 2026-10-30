@@ -5,7 +5,7 @@ test('ficha completa abre otra pestaña, conserva origen, secciones, formularios
  try{
   const context=await browser.newContext(),errors=[],writes=[];
   const trip={id:7,company_id:10,trip_number:'V-QA-7',status:'Planificado',origin:'Aserradero de prueba',destination:'Bodega de prueba',driver_name:'Conductora QA',client_name:'Cliente QA',truck_id:1,driver_id:2,client_id:3,patente:'AA1111',itinerary_version:0,resource_version:4,loads:[],events:[],checklists:[],proofs:[]};
-  const scripts=['app.js','checklist-shared.js','operations-ui.js','linked-trip.js','control-ui.js','equipment.js','itinerary.js','finance.js','pod-evidence.js','trip-workspace.js'];
+  const scripts=['executive-kpis.js','app.js','checklist-shared.js','operations-ui.js','linked-trip.js','control-ui.js','equipment.js','itinerary.js','finance.js','pod-evidence.js','trip-workspace.js'];
   let index=fs.readFileSync(path.join(__dirname,'../public/index.html'),'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').replace(/<link\b[^>]*https:[^>]*>/g,'');
   const fixture=`<script>window.Auth={token:'synthetic',user:{id:1,company_id:10,actor_type:'company',role_code:'operations',permissions:['trips.manage','economics.read']},request:async(url,o={})=>{const r=await fetch(url,o);const d=await r.json();if(!r.ok)throw Error(d.error);return d;}};</script>`;
   index=index.replace('</body>',fixture+scripts.map(f=>'<script src="/'+f+'"></script>').join('')+'</body>');

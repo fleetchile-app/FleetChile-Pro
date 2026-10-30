@@ -1,0 +1,6 @@
+.executive-dashboard{min-width:0;max-width:100%}
+.executive-dashboard .kpis{grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr))}
+.executive-dashboard .card,.executive-dashboard .field{min-width:0}
+.executive-dashboard .label,.executive-dashboard .good{overflow-wrap:anywhere}
+.executive-dashboard .wrap{max-width:100%;overflow-x:auto}
+.executive-dashboard input,.executive-dashboard select{min-width:0;max-width:100%}

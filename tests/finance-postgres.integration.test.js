@@ -48,7 +48,7 @@ test('PL25–PL29 PostgreSQL aislado: fuentes, presupuestos, reparto, conciliaci
    const f=await fixture();await revenue(f);const c=await cost(f);await approve(f,c);await reconcile(f,c.item_id);
    const s=await state(f),d=await run(f,'get','/api/economics/trips/:id/delta',{}, {id:f.trip.id}),report=await run(f,'get','/api/economics/reports',{}, {},{report:'economic'}),k=await run(f,'get','/api/economics/kpis');
    for(const r of [d,report,k])assert.equal(r.statusCode,200,JSON.stringify(r.payload));
-   assert.equal(s.summary.delta_clp,8000);assert.equal(d.payload.delta,8000);assert.equal(report.payload.rows[0].delta,8000);assert.equal(k.payload.economics.delta.reconciled,8000);
+   assert.equal(s.summary.delta_clp,8000);assert.equal(d.payload.delta,8000);assert.equal(report.payload.rows[0].delta,8000);assert.equal(k.payload.economics.delta.reconciled,8000);assert.equal(k.payload.economics.delta_per_km.reconciled,80);assert.equal(k.payload.operations.compliance.percentage,100);assert.equal(k.payload.fleet.drivers_active,0);
    const csv=await run(f,'get','/api/economics/reports',{}, {},{report:'economic',format:'csv'});assert.match(csv.payload,/8000/);
    const draft=await cost(f,0,'observed','other_direct');const reports=await run(f,'get','/api/economics/reports',{}, {},{report:'economic'}),kp=await run(f,'get','/api/economics/kpis');assert.equal(reports.payload.rows[0].delta_status,'provisional');assert.equal(kp.payload.economics.delta.provisional,8000);
   });

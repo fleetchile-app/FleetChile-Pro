@@ -19,7 +19,7 @@ test('Chrome: inicio de plataforma conserva su vista aunque el dashboard anterio
  try{
   const page=await browser.newPage(),user={id:85,name:'Plataforma QA',actor_type:'platform',platform_membership_id:1,role_code:'platform_superadmin',permissions:['platform.users.manage','platform.companies.manage','platform.context.switch']};page.setDefaultTimeout(7000);
   await page.addInitScript(()=>localStorage.setItem('fleet_token','synthetic-local-fixture'));
-  const index=fs.readFileSync(path.join(__dirname,'../public/index.html'),'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').replace(/<link\b[^>]*https:[^>]*>/g,'').replace('</body>','<script src="auth.js"></script><script src="app.js"></script><script src="admin.js"></script></body>');
+  const index=fs.readFileSync(path.join(__dirname,'../public/index.html'),'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').replace(/<link\b[^>]*https:[^>]*>/g,'').replace('</body>','<script src="auth.js"></script><script src="executive-kpis.js"></script><script src="app.js"></script><script src="admin.js"></script></body>');
   await page.route('https://qa-boot.invalid/**',async route=>{
    const p=new URL(route.request().url()).pathname;
    if(p.startsWith('/api/')){
@@ -50,7 +50,7 @@ test('Chrome: modal sobre drawer, selector sobre modal y camión seleccionado de
   await page.goto('https://qa.invalid/');
   for(const f of ['styles.css','sidebar.css','location-picker.css'])await page.addStyleTag({path:path.join(__dirname,'../public',f)});
   await page.evaluate(()=>{window.Auth={user:{actor_type:'company',company_id:80},request:async(url,o)=>{const r=await fetch(url,o);return r.json();}};window.setInterval=()=>0;});
-  for(const f of ['app.js','location-picker.js'])await page.addScriptTag({path:path.join(__dirname,'../public',f)});
+  for(const f of ['executive-kpis.js','app.js','location-picker.js'])await page.addScriptTag({path:path.join(__dirname,'../public',f)});
   for(const viewport of [{width:1440,height:1000},{width:390,height:844}]){
    await page.setViewportSize(viewport);await page.evaluate(()=>{document.getElementById('drawer').classList.remove('hidden');return openForm('loads');});
    assert.equal(await page.locator('#form input[name=truck]').count(),0);assert.equal(await page.locator('#form select[name=truck]').getAttribute('required'),null);
