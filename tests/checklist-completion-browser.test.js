@@ -15,6 +15,16 @@ test('checklist móvil: histórico visible, seis respuestas, inspección nueva y
   });
   for(const f of ['checklist-shared.js','driver-mobile.js'])await page.addScriptTag({path:path.join(__dirname,'../public',f)});await page.evaluate(async()=>{DriverMobile.bind();await DriverMobile.checklist(1,document.getElementById('host'));});
   await page.getByText('Registro histórico incompleto', {exact:false}).waitFor();assert.equal(await page.locator('select').count(),6);assert.equal(await page.locator('select').first().inputValue(),'');assert.match(await page.locator('#host').innerText(),/Sin respuesta válida/);
+  assert.equal(await page.locator('.driver-check-answer').count(),6);assert.equal(await page.locator('.driver-check-answer').first().textContent(),'');
+  await page.locator('select').first().selectOption('ok');assert.equal(await page.locator('.driver-check-answer').first().textContent(),'✓');assert.equal(await page.locator('.driver-check-answer').first().getAttribute('aria-label'),'Conforme');assert.equal(await page.locator('.driver-check-answer').first().evaluate(el=>getComputedStyle(el).color),'rgb(24, 115, 59)');
+  await page.locator('select').first().selectOption('fail');assert.equal(await page.locator('.driver-check-answer').first().textContent(),'✕');assert.equal(await page.locator('.driver-check-answer').first().getAttribute('aria-label'),'Con falla');
+  assert.equal(await page.locator('.driver-check-answer').first().evaluate(el=>getComputedStyle(el).color),'rgb(180, 35, 24)');
+  await page.setViewportSize({width:320,height:850});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  if(process.env.FLEETCHILE_CHECKLIST_REVIEW_DIR)await page.screenshot({path:path.join(process.env.FLEETCHILE_CHECKLIST_REVIEW_DIR,'checklist-indicators.png'),fullPage:true});
+  await page.setViewportSize({width:390,height:850});
+  await page.waitForFunction(()=>document.querySelector('[data-draft-status]').textContent.includes('Borrador guardado'));
+  await page.evaluate(()=>DriverMobile.checklist(1,document.getElementById('host')));assert.equal(await page.locator('select').first().inputValue(),'fail');assert.equal(await page.locator('.driver-check-answer').first().textContent(),'✕');
+  await page.locator('select').first().selectOption('');assert.equal(await page.locator('.driver-check-answer').first().textContent(),'');
   await page.getByRole('button',{name:'Registrar nueva inspección'}).click();assert.equal(await page.evaluate(()=>sent.length),0);
   for(const select of await page.locator('select').all())await select.selectOption('ok');await page.locator('[name=reason]').fill('Inspección física nueva sobre histórico incompleto');await page.getByRole('button',{name:'Registrar nueva inspección'}).click();await page.waitForFunction(()=>sent.length===1);await page.waitForFunction(()=>!document.querySelector('#host form'));
   const body=await page.evaluate(()=>sent[0]);assert.equal(body.supersedes_id,7);assert.equal(body.items.length,6);assert.match(await page.locator('#host').innerText(),/Cerrado por: Conductor sintético/);assert.equal(await page.locator('.checklist-record li').count(),6);
