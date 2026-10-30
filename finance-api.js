@@ -22,17 +22,17 @@ async function view(db,cid,tripId){
  if(summary.delta_status==='reconciled'&&(p?.tag_pending||pendingAuth))summary.delta_status='provisional';
  const comparison=(budgets.rows[0]?.entries||[]).map(b=>{const observed=costs.rows.filter(c=>c.category_code===b.category_code&&F.recognized(c)),comparable=b.includes_vat!=null&&observed.length>0&&observed.every(c=>c.amount_includes_vat===b.includes_vat),actual=observed.length?F.sum(observed.map(c=>c.amount_clp)):null;return {...b,actual_clp:actual,comparable,variance_clp:comparable?actual-Number(b.amount_clp):null};});
  const blockers=[];if(!['Completado','Cancelado'].includes(trip.status))blockers.push('El servicio todavía no ha terminado operacionalmente');
- if(summary.revenue_clp==null)blockers.push('Ingreso sin confirmar');if(summary.recognized_costs_clp==null)blockers.push('Costos sin confirmar: registra y concilia un costo cero explícito si corresponde');
+ if(summary.revenue_clp==null)blockers.push('Falta confirmar el valor del servicio que se cobrará al cliente');if(summary.recognized_costs_clp==null)blockers.push('Costos sin confirmar: registra y concilia un costo cero explícito si corresponde');
  if(summary.pending_items||pendingAuth)blockers.push('Hay costos o autorizaciones pendientes');if(costs.rows.some(c=>F.recognized(c)&&c.status!=='reconciled'))blockers.push('Hay costos reconocidos sin conciliar');
  if(p?.tag_pending)blockers.push('Hay TAG o peajes pendientes');
  if(loads.rows.length>1&&(!latest||latest.basis_hash!==basisHash))blockers.push('Falta distribución vigente por carga/cliente');
- return {trip:{id:trip.id,trip_number:trip.trip_number,status:trip.status,truck_id:trip.truck_id},control:await control(db,cid,tripId),profile:p,summary,costs:costs.rows,loads:loads.rows,budgets:budgets.rows,comparison,distributions:distributions.rows,distribution_stale:!!latest&&latest.basis_hash!==basisHash,basis,basis_hash:basisHash,sources:sources.rows,events:events.rows,authorizations,close_blockers:blockers};
+ return {trip:{id:trip.id,trip_number:trip.trip_number,status:trip.status,truck_id:trip.truck_id,revenue_clp:trip.revenue_clp,actual_departure:trip.actual_departure},control:await control(db,cid,tripId),profile:p,summary,costs:costs.rows,loads:loads.rows,budgets:budgets.rows,comparison,distributions:distributions.rows,distribution_stale:!!latest&&latest.basis_hash!==basisHash,basis,basis_hash:basisHash,sources:sources.rows,events:events.rows,authorizations,close_blockers:blockers};
 }
 function registerFinanceRoutes(app,pool){
  const route=(method,path,permission,work)=>app[method](path,requirePermission(permission),async(req,res)=>{try{await work(req,res,company(req));}catch(e){res.status(e.status||(e.code==='23505'||e.code==='55000'?409:500)).json({code:e.code||'FINANCE_ERROR',error:e.status?e.message:e.code==='23505'?'El registro ya existe; recarga para evitar duplicarlo':e.code==='55000'?e.message:'No se pudo procesar la operación económica'});}});
  const transaction=async work=>{const db=await pool.connect();try{await db.query('BEGIN');const result=await work(db);await db.query('COMMIT');return result;}catch(e){await db.query('ROLLBACK');throw e;}finally{db.release();}};
  const read=async(cid,id)=>{const db=await pool.connect();try{await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const data=await view(db,cid,id);await db.query('COMMIT');return data;}catch(e){await db.query('ROLLBACK');throw e;}finally{db.release();}};
- route('get',BASE,'economics.read',async(req,res,cid)=>res.json(await read(cid,E.id(req.params.id))));
+ route('get',BASE,'economics.read',async(req,res,cid)=>res.json({...await read(cid,E.id(req.params.id)),revenue_self_resolution_allowed:require('./revenue-authorization-policy').canResolveOwnRevenue(req,cid)}));
  route('get',BASE+'/export','economics.export',async(req,res,cid)=>{
   const data=await read(cid,E.id(req.params.id)),rows=data.distributions[0]?.entries||[],fields=['load_id','client_id','cargo','revenue_clp','cost_clp','delta_clp'];
   const cell=F.csvCell;

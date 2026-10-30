@@ -30,3 +30,31 @@ test('corrección conserva versión esperada y motivo sin exigir una declaració
  const s=surface();await s.open();await s.click('cost-version','11');await s.submit({amount:'1800',basis:'observed',vat:'true',reason:'Corregir digitación'});
  const b=JSON.parse(writes(s)[0].o.body);assert.equal(b.expected_version_id,12);assert.equal(b.justification,'Corregir digitación');assert.equal(b.support_status,null);assert.equal(b.amount_clp,1800);
 });
+
+test('ingreso pendiente identifica el valor del servicio, muestra monto existente y ofrece resolverlo',async()=>{
+ const fixture=structuredClone(data);fixture.summary.revenue_clp=null;fixture.trip.revenue_clp=250000;fixture.trip.actual_departure='2026-10-28T12:00:00Z';fixture.close_blockers=['Falta confirmar el valor del servicio que se cobrará al cliente'];
+ const s=surface((u,o)=>!o.method||o.method==='GET'?structuredClone(fixture):undefined);await s.open();
+ assert.match(s.panel.innerHTML,/Falta confirmar el valor del servicio/);assert.match(s.panel.innerHTML,/No es el combustible/);assert.match(s.panel.innerHTML,/250\.000/);assert.match(s.panel.innerHTML,/Resolver: confirmar valor del servicio/);assert.match(s.panel.innerHTML,/Costos pendientes/);
+ await s.click('revenue');assert.match(s.elements.form.innerHTML,/value="250000"/);assert.match(s.elements.form.innerHTML,/El viaje ya comenzó/);assert.equal(writes(s).length,0);
+});
+
+test('solicitud existente se señala para revisión sin pedir otra ni mostrar autoaprobación',async()=>{
+ const fixture=structuredClone(data);fixture.summary.revenue_clp=null;fixture.authorizations=[{id:90,request_type:'revenue_change',requested_by:1,reason:'Confirmar tarifa'}];
+ const s=surface(()=>structuredClone(fixture));await s.open();assert.match(s.panel.innerHTML,/Existe la solicitud #90/);assert.match(s.panel.innerHTML,/Revisar solicitud pendiente/);assert.match(s.panel.innerHTML,/Esta solicitud es tuya/);assert.doesNotMatch(s.panel.innerHTML,/data-finance="approve"/);await s.click('review-revenue');assert.equal(writes(s).length,0);
+});
+
+test('acceso desde Economía abre Control económico y rechaza un contexto anterior',async()=>{
+ const s=surface();await s.open();await s.state.openTripRevenue();assert.equal(s.elements.mt.textContent,'Cambiar valor del servicio');s.elements.mt.textContent='Sin cambio';s.state.Auth.token='otra-sesion';await s.state.openTripRevenue();assert.equal(s.elements.mt.textContent,'Sin cambio');assert.equal(writes(s).length,0);
+});
+
+test('excepción del servidor ofrece aprobación propia solo para ingreso y conserva contraseña y motivo',async()=>{
+ const fixture=structuredClone(data);fixture.revenue_self_resolution_allowed=true;fixture.authorizations=[{id:90,request_type:'revenue_change',requested_by:1,reason:'Valor del servicio'},{id:91,request_type:'cost_version',requested_by:1,reason:'Costo'}];
+ const s=surface((u,o)=>o.method==='GET'?structuredClone(fixture):undefined);await s.open();assert.match(s.panel.innerHTML,/Aprobar como administrador/);assert.equal((s.panel.innerHTML.match(/data-finance="approve"/g)||[]).length,1);
+ await s.click('approve','90');assert.match(s.elements.form.innerHTML,/Resolución propia/);assert.match(s.elements.form.innerHTML,/Confirma tu contraseña/);await s.submit({reason:'Monto acordado confirmado',password:'fixture-secret'});const c=writes(s)[0];assert.match(c.url,/authorizations\/90\/approve$/);assert.deepEqual(JSON.parse(c.o.body),{reason:'Monto acordado confirmado',password:'fixture-secret'});assert.equal(s.elements.form.querySelector('[name=password]').value,'');
+ const denied=surface((u,o)=>o.method==='GET'?structuredClone(fixture):undefined,['economics.read','economics.manage']);await denied.open();assert.doesNotMatch(denied.panel.innerHTML,/data-finance="approve"/);
+});
+
+test('gerente autorizado tiene acción propia identificada sin recibir facultades sobre costos propios',async()=>{
+ const fixture=structuredClone(data);fixture.revenue_self_resolution_allowed=true;fixture.authorizations=[{id:90,request_type:'revenue_change',requested_by:1,reason:'Valor del servicio'},{id:91,request_type:'cost_version',requested_by:1,reason:'Costo'}];
+ const s=surface((u,o)=>o.method==='GET'?structuredClone(fixture):undefined);s.state.Auth.user.role_code='manager';await s.open();assert.match(s.panel.innerHTML,/Aprobar como gerente/);assert.doesNotMatch(s.panel.innerHTML,/Aprobar como administrador/);assert.equal((s.panel.innerHTML.match(/data-finance="approve"/g)||[]).length,1);await s.click('approve','90');assert.match(s.elements.form.innerHTML,/Resolución propia del gerente/);assert.match(s.elements.form.innerHTML,/Confirma tu contraseña/);
+});

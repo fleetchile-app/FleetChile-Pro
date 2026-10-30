@@ -95,6 +95,48 @@ test('PL25–PL29 PostgreSQL aislado: fuentes, presupuestos, reparto, conciliaci
    await assert.rejects(query('update trips set revenue_clp=9999 where id=$1',[f.trip.id]),/ECONOMIC_CLOSED/);
    r=await run(f,'post',BASE+'/reopen',{version:Number(s.control.version),reason:'Factura tardía fixture',password:'fixture-password'},{id:f.trip.id});assert.equal(r.statusCode,200,JSON.stringify(r.payload));s=await state(f);assert.equal(s.events.length,2);assert.equal(s.control.state,'open');
   });
+  for(const leader of ['company_admin','manager'])await t.test(leader+' confirma su ingreso con contraseña, sin superior ni cuenta artificial; otros roles y costos mantienen separación',async()=>{
+   const f=await fixture(),other=await fixture();
+   const leaderRole=await one('select id from roles where code=$1',[leader]);const membership=await one('insert into user_memberships(company_id,user_id,role_id) values($1,$2,$3) returning id',[f.cid,f.actor.id,leaderRole.id]);
+   f.actor={...f.actor,role_code:leader,membership_id:membership.id};
+   await query('update trips set actual_departure=now(),revenue_clp=null where id=$1',[f.trip.id]);
+   const requested=await run(f,'patch','/api/economics/trips/:id/revenue',{revenue_clp:250000,revenue_includes_vat:true,reason:'Confirmación inicial del servicio'},{id:f.trip.id});assert.equal(requested.statusCode,202,JSON.stringify(requested.payload));
+   const id=requested.payload.request.id,path='/api/economics/authorizations/:id/approve',body={reason:'Resolución propia del administrador',password:'fixture-password'};
+   assert.equal((await run(f,'post',path,{...body,password:'incorrecta'},{id})).statusCode,401);
+   assert.equal((await run(f,'post',path,{...body,reason:''},{id})).statusCode,400);
+   for(const code of ['operations','administrative'])assert.equal((await run({...f,actor:{...f.actor,role_code:code}},'post',path,body,{id})).statusCode,403);
+   assert.equal((await run({...f,actor:{...f.actor,permissions:['economics.read']}},'post',path,body,{id})).statusCode,403);
+   assert.equal((await run(other,'post',path,body,{id})).statusCode,404);
+   assert.equal((await state(f)).revenue_self_resolution_allowed,true);
+   const approved=await run(f,'post',path,body,{id});assert.equal(approved.statusCode,200,JSON.stringify(approved.payload));assert.equal(approved.payload.self_resolution,true);
+   assert.equal(approved.payload.resolution_policy,leader==='manager'?'company_manager_revenue_exception':'company_admin_revenue_exception');
+   const persisted=await one('select * from economic_authorization_requests where id=$1',[id]);assert.equal(String(persisted.resolved_by),String(persisted.requested_by));assert.equal(persisted.self_resolution,true);assert.ok(persisted.reauthenticated_at);
+   assert.equal(Number((await one('select revenue_clp from trips where id=$1',[f.trip.id])).revenue_clp),250000);
+   const audit=await one("select after_data from audit_logs where entity='economic_authorization' and entity_id=$1 and action='approved' order by id desc limit 1",[String(id)]);assert.equal(audit.after_data.resolution_policy,leader==='manager'?'company_manager_revenue_exception':'company_admin_revenue_exception');assert.doesNotMatch(JSON.stringify(audit),/fixture-password|password_hash/);
+   assert.equal((await run(f,'post',path,body,{id})).statusCode,409);
+   const expense=await cost(f,1000,'observed','other_direct'),request=await run(f,'post','/api/economics/authorizations',{trip_id:Number(f.trip.id),request_type:'cost_version',cost_version_id:Number(expense.current_version_id),reason:'Costo requiere independencia'});assert.equal(request.statusCode,201);
+   assert.equal((await run(f,'post',path,body,{id:request.payload.id})).statusCode,403);
+   await assert.rejects(query("update economic_authorization_requests set self_resolution=true,status='approved',resolved_by=requested_by,resolved_at=now(),reauthenticated_at=now(),resolution_reason='No autorizado' where id=$1",[request.payload.id]));
+   await run({...f,actor:f.approver},'post',path,body,{id:request.payload.id});
+   await reconcile(f,expense.item_id);
+   const s=await state(f);assert.equal(s.summary.revenue_clp,250000);
+   const closed=await run(f,'post',BASE+'/close',{version:Number(s.control.version),reason:'Cierre con ingreso confirmado por administrador',password:'fixture-password'},{id:f.trip.id});assert.equal(closed.statusCode,200,JSON.stringify(closed.payload));
+  });
+  await t.test('excepción de ingreso valida membresía en SQL y revierte aprobación propia si falla auditoría o cambió el monto',async()=>{
+   const f=await fixture(),m=await one('insert into user_memberships(company_id,user_id,role_id) values($1,$2,$3) returning id',[f.cid,f.actor.id,role.id]);f.actor={...f.actor,role_code:'company_admin',membership_id:m.id};
+   await query('update trips set actual_departure=now(),revenue_clp=15000 where id=$1',[f.trip.id]);
+   const requested=await run(f,'patch','/api/economics/trips/:id/revenue',{revenue_clp:25000,revenue_includes_vat:null,reason:'Ajustar valor pactado'},{id:f.trip.id});assert.equal(requested.statusCode,202);
+   const id=requested.payload.request.id,body={reason:'Confirmado por administrador',password:'fixture-password'};
+   const ops=await one("select id from roles where code='operations'");await query('update user_memberships set role_id=$1 where id=$2',[ops.id,m.id]);
+   await assert.rejects(query("update economic_authorization_requests set self_resolution=true,status='approved',resolved_by=requested_by,resolved_at=now(),reauthenticated_at=now(),resolution_reason='No autorizado' where id=$1",[id]),/administrador empresarial activo/);
+   await query('update user_memberships set role_id=$1 where id=$2',[role.id,m.id]);
+   await pg.exec("create function fail_own_revenue_audit() returns trigger as $own_audit$ begin if NEW.entity='economic_authorization' and NEW.action='approved' then raise exception 'audit fixture'; end if; return NEW; end; $own_audit$ language plpgsql; create trigger own_revenue_fail_audit before insert on audit_logs for each row execute function fail_own_revenue_audit();");
+   try{const result=await run(f,'post','/api/economics/authorizations/:id/approve',body,{id});assert.equal(result.statusCode,500);}finally{await pg.exec('drop trigger own_revenue_fail_audit on audit_logs; drop function fail_own_revenue_audit();');}
+   assert.equal(Number((await one('select revenue_clp from trips where id=$1',[f.trip.id])).revenue_clp),15000);
+   const pending=await one('select status,self_resolution from economic_authorization_requests where id=$1',[id]);assert.equal(pending.status,'pending');assert.equal(pending.self_resolution,false);assert.equal(Number((await one('select count(*) n from trip_revenue_history where trip_id=$1',[f.trip.id])).n),0);
+   await query('update trips set revenue_clp=16000 where id=$1',[f.trip.id]);assert.equal((await run(f,'post','/api/economics/authorizations/:id/approve',body,{id})).statusCode,409);
+   await pg.exec(source('migrations/048_company_admin_revenue_resolution.sql'));
+  });
   await t.test('fallo de auditoría revierte presupuesto y token; API directa no cruza empresas',async()=>{
    const f=await fixture(),other=await fixture();let r=await run(other,'get',BASE,{}, {id:f.trip.id});assert.equal(r.statusCode,404);
    await pg.exec("create function fail_fin_audit() returns trigger as $$ begin if NEW.entity='trip_budget' then raise exception 'fixture audit failure'; end if; return NEW; end; $$ language plpgsql; create trigger fin_fail_audit before insert on audit_logs for each row execute function fail_fin_audit();");
