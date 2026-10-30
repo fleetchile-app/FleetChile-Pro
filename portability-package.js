@@ -42,6 +42,8 @@ async function packageCompany(db,job,store,{env=process.env,signal,tempRoot=os.t
   for(const r of pod)push({...r,file:`files/pod/${r.id}.bin`,kind:'s3'});
   const consents=(await db.query('select id,storage_key,size,sha256,mime_type from client_consent_documents where company_id=$1 limit $2',[job.company_id,cfg.maxFiles+1])).rows;
   for(const r of consents)push({...r,file:`files/consents/${r.id}.pdf`,kind:'s3'});
+  const financial=(await db.query('select id,storage_key,size,sha256,mime_type from financial_support_entries where company_id=$1 and storage_key is not null limit $2',[job.company_id,cfg.maxFiles+1])).rows;
+  for(const r of financial)push({...r,file:`files/financial-support/${r.id}.bin`,kind:'s3'});
   const issued=(await db.query('select id,octet_length(pdf) size,sha256 from company_issued_documents where company_id=$1 limit $2',[job.company_id,cfg.maxFiles+1])).rows;
   for(const r of issued)push({...r,file:`files/issued/${r.id}.pdf`,kind:'issued',mime_type:'application/pdf'});
   const logos=(await db.query('select version,octet_length(logo) size from company_branding_revisions where company_id=$1 and logo is not null limit $2',[job.company_id,cfg.maxFiles+1])).rows;

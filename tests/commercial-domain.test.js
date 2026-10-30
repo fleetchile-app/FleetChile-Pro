@@ -30,4 +30,5 @@ test('clasifica APIs modernas y heredadas sin confundir GPS con operaciones',()=
  for(const path of ['/api/driver/trips/1/positions','/api/fleet/trucks/2/position','/api/trucks/2/location'])assert.equal(D.moduleFor(path),'gps');
  assert.equal(D.moduleFor('/api/fleet/work-orders/1/receive'),'maintenance');assert.equal(D.moduleFor('/api/maintenance'),'maintenance');assert.equal(D.moduleFor('/api/driver/trips/1/deliveries'),'pod');assert.equal(D.moduleFor('/api/economics/reports'),'reports');assert.equal(D.moduleFor('/api/platform/commercial/plans'),null);
  assert.equal(D.moduleFor('/API/ECONOMICS/trips/1/costs/'),'economics');assert.equal(D.moduleFor('/API/FLEET/TRUCKS/2/POSITION/'),'gps');
+ assert.equal(D.moduleFor('/api/financial-support/cost/1'),'economics');assert.equal(D.moduleFor('/api/financial-support/source/1'),'economics');assert.equal(D.moduleFor('/api/financial-support/fuel/1'),'fuel');
 });

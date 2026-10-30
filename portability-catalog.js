@@ -1,7 +1,7 @@
 'use strict';
 // Explicit allow-list. New tables do not silently enter a tenant's export.
 const companyTables=[
- 'trucks','drivers','routes','loads','maintenance','fuel','alerts','clients','trips','operational_locations','road_routes','trip_route_snapshots',
+ 'trucks','drivers','routes','loads','maintenance','fuel','financial_support_entries','alerts','clients','trips','operational_locations','road_routes','trip_route_snapshots',
  'trip_economic_profiles','trip_revenue_history','trip_cost_items','trip_cost_versions','economic_authorization_requests',
  'company_personnel_policies','company_people','person_contracts','person_conditions','person_driver_licenses','person_events','personnel_notifications',
  'client_profile_events','client_consent_documents','client_privacy_status','driver_profile_events',
@@ -50,6 +50,7 @@ async function catalog(db){
   if(table==='company_issued_documents')fields.push("'files/issued/'||t.id||'.pdf' pdf_file");
   if(table==='delivery_proof_files')fields.push("'files/pod/'||t.id||'.bin' attachment_file");
   if(table==='client_consent_documents')fields.push("'files/consents/'||t.id||'.pdf' attachment_file");
+  if(table==='financial_support_entries')fields.push("case when t.storage_key is not null then 'files/financial-support/'||t.id||'.bin' else null end attachment_file");
   entries.push({name:table,sql:`select ${fields.join(',')} from ${identifier(table)} t where ${where}`,csv:CSV.has(table),columns:fields.map(f=>f.match(/(?:as )?"?([a-z_]+)"?$/)?.[1]||'value')});
  }
  entries.push({name:'accounts',sql:`select u.id,u.name,u.email,u.phone,u.active from users u where exists(select 1 from user_memberships m where m.user_id=u.id and m.company_id=$1) or (u.company_id=$1 and not exists(select 1 from user_memberships m where m.user_id=u.id))`});

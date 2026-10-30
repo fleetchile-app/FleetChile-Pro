@@ -82,7 +82,7 @@ function registerFinanceRoutes(app,pool){
   const page=E.id(req.query.page||1,'Página');res.json({rows:(await pool.query('select s.*,coalesce(a.used,0) allocated_clp,s.amount_clp-coalesce(a.used,0) remaining_clp from economic_sources s left join (select a.source_id,sum(a.amount_clp) used from economic_source_allocations a where not exists(select 1 from economic_source_reversals x where x.allocation_id=a.id) group by a.source_id) a on a.source_id=s.id where s.company_id=$1 order by s.id desc limit 25 offset $2',[cid,(page-1)*25])).rows,page,page_size:25});
  });
  route('get',SOURCES+'/fuel-options','economics.read',async(req,res,cid)=>{
-  const page=E.id(req.query.page||1,'Página');res.json({rows:(await pool.query('select f.id,f.date,f.truck,f.total_clp,f.station from fuel f where f.company_id=$1 and not exists(select 1 from economic_sources s where s.fuel_id=f.id) order by f.id desc limit 25 offset $2',[cid,(page-1)*25])).rows,page,page_size:25});
+  const page=E.id(req.query.page||1,'Página');res.json({rows:(await pool.query('select f.id,f.date,f.truck,f.total_clp,f.station from fuel f where f.company_id=$1 and f.total_clp is not null and not exists(select 1 from economic_sources s where s.fuel_id=f.id) order by f.id desc limit 25 offset $2',[cid,(page-1)*25])).rows,page,page_size:25});
  });
  route('post',SOURCES,'economics.manage',async(req,res,cid)=>{
   const b=req.body||{};if(!['fuel','toll'].includes(b.kind))throw E.fail('Origen no válido');if(b.includes_vat!==true&&b.includes_vat!==false&&b.includes_vat!==null)throw E.fail('Indica la condición de IVA');
@@ -90,7 +90,7 @@ function registerFinanceRoutes(app,pool){
    let fuel=null,amount,truckId,date,provider,reference,original;
    if(b.kind==='fuel'){
     fuel=(await db.query('select * from fuel where id=$1 and company_id=$2 for update',[E.id(b.fuel_id,'Carga de combustible'),cid])).rows[0];if(!fuel)throw E.fail('Registro de combustible no encontrado',404);
-    amount=F.money(fuel.total_clp);truckId=fuel.truck_id;date=fuel.date;provider='fuel';reference=String(fuel.id);original={fuel_id:fuel.id,date:fuel.date,truck_id:fuel.truck_id,total_clp:fuel.total_clp,liters:fuel.liters,station:fuel.station};
+    if(fuel.total_clp===null)throw E.fail('Completa la valoración del combustible antes de crear su origen económico',409);amount=F.money(fuel.total_clp);truckId=fuel.truck_id;date=fuel.date;provider='fuel';reference=String(fuel.id);original={fuel_id:fuel.id,date:fuel.date,truck_id:fuel.truck_id,total_clp:fuel.total_clp,liters:fuel.liters,station:fuel.station};
    }else{
     amount=F.money(b.amount_clp);truckId=E.id(b.truck_id,'Vehículo',{optional:true});date=b.occurred_on;
     if(typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date)||Number.isNaN(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date)throw E.fail('Fecha del peaje no válida');

@@ -42,6 +42,7 @@ function moduleFor(path){
  if(/\/api\/(?:fleet\/)?trucks\/\d+\/(?:positions?|track|history|location)$/.test(path)||/\/api\/fleet\/positions$/.test(path)||/\/api\/driver\/trips\/\d+\/positions$/.test(path))return 'gps';
  if(/(?:\/maintenance|\/work-orders|\/maintenance-routines)/.test(path))return 'maintenance';
  if(/\/fuel(?:\/|$)/.test(path))return 'fuel';
+ if(/\/financial-support\/(?:cost|source)(?:\/|$)/.test(path))return 'economics';
  if(/\/deliveries(?:\/|$)/.test(path)||/\/delivery-proofs(?:\/|$)/.test(path))return 'pod';
  if(/\/economics\//.test(path))return /\/reports(?:\/|$)/.test(path)?'reports':'economics';
  if(/\/(?:trips|routes|loads)(?:\/|$)/.test(path))return 'operations';
