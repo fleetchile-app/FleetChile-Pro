@@ -37,6 +37,48 @@ function registerPodEvidenceRoutes(app,pool,{storage}={}){
    join trips t on t.id=p.trip_id where p.trip_id=$1 and t.company_id=$2 order by p.id desc`,[tripId,cid])).rows;
   res.set('Cache-Control','private, no-store').json({trip_id:tripId,proofs:rows});
  });
+ route(BASE+'/:proofId/pdf',async(req,res,cid,tripId)=>{
+  res.set('Cache-Control','private, no-store').set('X-Content-Type-Options','nosniff');
+  const proofId=id(req.params.proofId),db=await pool.connect();
+  try{
+   await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+   const proof=(await db.query(`select p.*,l.cargo,l.weight_kg,l.guide,l.origin load_origin,l.destination load_destination,
+    c.name client_name,u.name created_by_name from trip_delivery_proofs p join trips t on t.id=p.trip_id
+    left join trip_loads l on l.id=p.load_id and l.trip_id=p.trip_id
+    left join clients c on c.id=coalesce(l.client_id,t.client_id) and c.company_id=t.company_id left join users u on u.id=p.created_by
+    where p.id=$1 and p.trip_id=$2 and t.company_id=$3`,[proofId,tripId,cid])).rows[0];
+   if(!proof)throw fail(404,'Entrega no encontrada');
+   if(proof.status!=='CLOSED')throw fail(409,'El comprobante requiere una entrega cerrada');
+   const trip=(await db.query(`select t.*,d.name driver_name,v.patente,r.patente trailer_patente from trips t
+    left join drivers d on d.id=t.driver_id and d.company_id=t.company_id
+    left join trucks v on v.id=t.truck_id and v.company_id=t.company_id
+    left join trucks r on r.id=t.trailer_id and r.company_id=t.company_id where t.id=$1 and t.company_id=$2`,[tripId,cid])).rows[0];
+   if(!trip||req.user?.role_code==='driver'&&String(trip.driver_id)!==String(req.user.driver_id))throw fail(404,'Viaje no encontrado');
+   const resources=(await db.query(`select version,effective_at,snapshot from trip_resource_revisions where trip_id=$1 and company_id=$2
+    and effective_at is not null and effective_at<=$3 and not baseline_observation order by effective_at desc,version desc limit 1`,[tripId,cid,proof.delivered_at])).rows[0];
+   const plan=(await db.query(`select version,plan from trip_itinerary_revisions where trip_id=$1 and company_id=$2
+    and recorded_at<=$3 order by version desc limit 1`,[tripId,cid,proof.delivered_at])).rows[0];
+   const identity=await require('./company-branding').loadBranding(db,cid);
+   const files=(await db.query('select * from delivery_proof_files where proof_id=$1 order by id',[proofId])).rows;
+   if(files.length>5||files.filter(f=>f.type==='signature').length>1||files.some(f=>!['signature','photo'].includes(f.type)))throw fail(409,'Las evidencias requieren revisión antes de generar el comprobante');
+   const {normalizeEvidence,generatePodPdf,TEMPLATE_VERSION}=require('./pod-pdf');
+   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);timer.unref?.();const images=[];
+   try{
+    const source=files.length?(storage||createStorage()):null;
+    for(const file of files){
+     if(!['image/png','image/jpeg'].includes(file.mime_type))throw fail(409,'Formato de evidencia no permitido');
+     const bytes=await verifiedBody(await source.get(file.storage_key,{signal:controller.signal}),file);
+     images.push({id:file.id,type:file.type,...await normalizeEvidence(bytes,file.mime_type)});
+    }
+   }finally{clearTimeout(timer);}
+   const documentId=crypto.randomUUID(),emittedAt=new Date(),pdf=generatePodPdf({trip,proof,identity,resources,plan,images,documentId,emittedAt});
+   const sha256=crypto.createHash('sha256').update(pdf).digest('hex');
+   await writeAudit(db,req,{companyId:cid,action:'download',entity:'pod_receipt_pdf',entityId:proofId,afterData:{trip_id:tripId,proof_id:proofId,document_id:documentId,sha256,template_version:TEMPLATE_VERSION,branding:require('./company-branding').identitySnapshot(identity),file_ids:files.map(f=>f.id),emitted_at:emittedAt}});
+   await db.query('COMMIT');
+   res.set('Content-Type','application/pdf').set('Content-Length',String(pdf.length)).set('X-Document-Id',documentId)
+    .set('Content-Disposition',`attachment; filename="entrega-viaje-${tripId}-pod-${proofId}.pdf"`).send(pdf);
+  }catch(e){try{await db.query('ROLLBACK')}catch{}throw e;}finally{db.release();}
+ });
  route(BASE+'/:proofId/files/:fileId',async(req,res,cid,tripId)=>{
   const file=(await pool.query(`select f.* from delivery_proof_files f join trip_delivery_proofs p on p.id=f.proof_id
    join trips t on t.id=p.trip_id where f.id=$1 and p.id=$2 and t.id=$3 and t.company_id=$4`,

@@ -12,15 +12,16 @@
     const data=await Auth.request(`/api/operations/trips/${Number(id)}/pod`);
     if(!same(id,user,context)||!host.isConnected)return;
     const toolbar=panel.querySelector('.toolbar');panel.replaceChildren();if(toolbar)panel.appendChild(toolbar);panel.appendChild(host);
-    host.innerHTML=(data.proofs||[]).map(p=>`<article class="card"><h4>${escape(p.cargo||'Entrega')} · ${{CLOSED:'Cerrada',DRAFT:'Borrador',VOID:'Anulada'}[p.status]||'Registro histórico'}</h4><p>${escape(p.recipient_name||'Receptor no informado')} · ${escape(p.recipient_rut||'RUT no informado')}</p><p>${escape(p.notes||'')}</p><div class="toolbar">${(p.files||[]).map(f=>`<button type="button" class="secondary" data-proof="${Number(p.id)}" data-file="${Number(f.id)}">Descargar ${f.type==='signature'?'firma':'fotografía'}</button>`).join('')||'<span>Sin firma ni fotografía almacenada. No se presume evidencia.</span>'}</div><p role="status" data-pod-status></p></article>`).join('')||'<p>No hay entregas registradas.</p>';
-    host.querySelectorAll('[data-file]').forEach(button=>button.onclick=async()=>{
-     const status=button.closest('article').querySelector('[data-pod-status]');button.disabled=true;status.textContent='Verificando respaldo privado…';
+    host.innerHTML=(data.proofs||[]).map(p=>`<article class="card"><h4>${escape(p.cargo||'Entrega')} · ${{CLOSED:'Cerrada',DRAFT:'Borrador',VOID:'Anulada'}[p.status]||'Registro histórico'}</h4><p>${escape(p.recipient_name||'Receptor no informado')} · ${escape(p.recipient_rut||'RUT no informado')}</p><p>${escape(p.notes||'')}</p>${p.status==='CLOSED'?`<div class="toolbar"><button type="button" class="primary" data-proof="${Number(p.id)}" data-pod-pdf>Generar comprobante PDF</button></div><p class="muted">Constancia de recepción con identidad empresarial y evidencias disponibles. No presume conformidad sin reservas.</p>`:''}<div class="toolbar">${(p.files||[]).map(f=>`<button type="button" class="secondary" data-proof="${Number(p.id)}" data-file="${Number(f.id)}">Descargar ${f.type==='signature'?'firma':'fotografía'}</button>`).join('')||'<span>Sin firma ni fotografía almacenada. No se presume evidencia.</span>'}</div><p role="status" data-pod-status></p></article>`).join('')||'<p>No hay entregas registradas.</p>';
+    host.querySelectorAll('[data-file],[data-pod-pdf]').forEach(button=>button.onclick=async()=>{
+     const status=button.closest('article').querySelector('[data-pod-status]'),pdf=button.hasAttribute('data-pod-pdf');button.disabled=true;status.textContent=pdf?'Preparando comprobante y verificando evidencias privadas…':'Verificando respaldo privado…';
      try{
-      const response=await fetch(`/api/operations/trips/${Number(id)}/pod/${button.dataset.proof}/files/${button.dataset.file}`);
+      const response=await fetch(`/api/operations/trips/${Number(id)}/pod/${button.dataset.proof}/${pdf?'pdf':'files/'+button.dataset.file}`);
       if(!response.ok){const error=await response.json().catch(()=>({}));throw Error(error.error||'No se pudo descargar la evidencia');}
+      if(pdf&&!response.headers.get('Content-Type')?.includes('application/pdf'))throw Error('El servidor no devolvió un comprobante PDF válido');
       const blob=await response.blob();if(!same(id,user,context)||!host.isConnected)return;
-      const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=`pod-${Number(id)}-${button.dataset.file}.${blob.type==='image/png'?'png':'jpg'}`;
-      document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);status.textContent='Evidencia verificada y descargada.';
+      const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=pdf?`entrega-viaje-${Number(id)}-pod-${button.dataset.proof}.pdf`:`pod-${Number(id)}-${button.dataset.file}.${blob.type==='image/png'?'png':'jpg'}`;
+      document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);status.textContent=pdf?'Comprobante PDF generado y descargado.':'Evidencia verificada y descargada.';
      }catch(e){status.textContent=e.message;}finally{button.disabled=false;}
     });
    }catch(e){if(same(id,user,context)&&host.isConnected){host.textContent=e.message;const retry=document.createElement('button');retry.type='button';retry.className='secondary';retry.textContent='Reintentar consulta';retry.onclick=load;host.appendChild(retry);}}

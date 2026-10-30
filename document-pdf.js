@@ -29,8 +29,8 @@ function paginate(blocks,sections,limit){
  if(page.length)pages.push(page);return pages.length?pages:[[]];
 }
 // Reusable A4 layout. All strings are escaped, logos are normalized server-side JPEGs.
-function generateDocumentPdf({title,lines=[],blocks,identity={},documentId='',emittedAt=new Date(),sections=[]}){
- const pageWidth=595.28,pageHeight=841.89,pages=paginate(blocks||lines.map(line=>[line]),sections,39);
+function generateDocumentPdf({title,lines=[],blocks,identity={},documentId='',emittedAt=new Date(),sections=[],visualPages=[],templateVersion=TEMPLATE_VERSION}){
+ const pageWidth=595.28,pageHeight=841.89,textPages=paginate(blocks||lines.map(line=>[line]),sections,39),pages=[...textPages,...visualPages.map(()=>[])];
  const objects=[],add=v=>{objects.push(v);return objects.length};
  const catalog=add('<< /Type /Catalog /Pages 2 0 R >>'),pagesObj=add('');
  const font=add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
@@ -51,7 +51,20 @@ function generateDocumentPdf({title,lines=[],blocks,identity={},documentId='',em
   stream+=`${color} RG 1 w 40 751 m 555 751 l S\n`;
   stream+=text(title,40,730,14,'F2');
   stream+=text(`Documento: ${documentId||'Vista previa'} | Emitido UTC: ${new Date(emittedAt).toISOString().slice(0,16).replace('T',' ')}`,40,710,8);
-  stream+=text(`Plantilla: ${TEMPLATE_VERSION} | Identidad: v${identity.version||0}`,40,696,8);
+  stream+=text(`Plantilla: ${templateVersion} | Identidad: v${identity.version||0}`,40,696,8);
+  let extraResources='';
+  const visual=visualPages[page-textPages.length];
+  if(visual){
+   for(const line of visual.text||[])stream+=text(line.value,line.x??47,line.y,line.size||10,line.bold?'F2':'F1');
+   for(const [index,item] of (visual.images||[]).entries()){
+    const bytes=Buffer.from(item.jpeg),name='Evidence'+index;
+    const object=add(`<< /Type /XObject /Subtype /Image /Width ${item.width} /Height ${item.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${bytes.length} >>\nstream\n${bytes.toString('latin1')}\nendstream`);
+    extraResources+=`/${name} ${object} 0 R `;
+    const scale=Math.min(item.box.width/item.width,item.box.height/item.height),w=item.width*scale,h=item.height*scale;
+    const x=item.box.x+(item.box.width-w)/2,y=item.box.y+(item.box.height-h)/2;
+    stream+=`q ${w.toFixed(2)} 0 0 ${h.toFixed(2)} ${x.toFixed(2)} ${y.toFixed(2)} cm /${name} Do Q\n`;
+   }
+  }
   pages[page].forEach((line,i)=>{
    const y=674-i*15,section=sections.includes(line.replace(' (continuación)',''));
    if(section){stream+=`0.92 0.95 0.98 rg 40 ${y-4} 515 16 re f\n`;stream+=text(line,47,y,10,'F2',color);}
@@ -62,7 +75,7 @@ function generateDocumentPdf({title,lines=[],blocks,identity={},documentId='',em
   stream+=text(clip(identity.legal_name||'FleetChile',400,8),40,34,8);
   stream+=text(`Pagina ${page+1} de ${pages.length}`,460,34,8);
   const content=add(`<< /Length ${Buffer.byteLength(stream,'latin1')} >>\nstream\n${stream}endstream`);
-  ids.push(add(`<< /Type /Page /Parent ${pagesObj} 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${font} 0 R /F2 ${bold} 0 R >> ${image?`/XObject << /Logo ${image} 0 R >>`:''} >> /Contents ${content} 0 R >>`));
+  ids.push(add(`<< /Type /Page /Parent ${pagesObj} 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${font} 0 R /F2 ${bold} 0 R >> ${image||extraResources?`/XObject << ${image?`/Logo ${image} 0 R `:''}${extraResources}>>`:''} >> /Contents ${content} 0 R >>`));
  }
  objects[pagesObj-1]=`<< /Type /Pages /Kids [${ids.map(id=>`${id} 0 R`).join(' ')}] /Count ${ids.length} >>`;
  let output='%PDF-1.4\n%\xE2\xE3\xCF\xD3\n',offsets=[0];
