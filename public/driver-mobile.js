@@ -3,7 +3,7 @@
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  let vault=null,identity='',generation=0,syncing=null,storageError='';
  const contexts=new Map();
- const actionLabels={accept:'Aceptación',events:'Evento del recorrido',checklist:'Checklist',delivery:'Entrega'};
+ const actionLabels={accept:'Aceptación',events:'Evento del recorrido',checklist:'Checklist',delivery:'Entrega',fuel:'Combustible'};
  const purposeLabels={pickup:'Recogida',delivery:'Entrega',mixed:'Recogida y entrega',rest:'Descanso',toll:'Peaje',weigh:'Pesaje',other:'Otra parada'};
  const checks=window.FleetChecklist?.controls||[['brakes','Frenos y dirección'],['tires','Neumáticos'],['lights','Luces y señalización'],['visibility','Espejos, vidrios y visibilidad'],['safety','Elementos de seguridad'],['documents','Documentación del vehículo']];
  async function request(path,body){
@@ -35,24 +35,26 @@
   syncing=(async()=>{
    try{
     const me=await request('/api/auth/me');if(!active(stamp)||me.user?.must_change_password||DriverVault.owner(me.user)!==owner)throw Error('La identidad cambió. Vuelve a iniciar sesión.');
+    storageError='';
     const blocked=new Set();
     for(const row of await store.list()){
      if(!active(stamp))return;
      if(row.state==='draft')continue;
-     if(row.state==='review'){blocked.add(String(row.tripId));continue;}
-     if(blocked.has(String(row.tripId)))continue;
+     if(row.state==='review'){if(row.kind!=='fuel')blocked.add(String(row.tripId));continue;}
+     if(blocked.has(String(row.tripId))&&row.kind!=='fuel')continue;
      try{
       // Server checks ownership and versions under its transaction lock. Avoid a
       // preflight version rewrite: a lost success response must replay its key.
-      const path=row.kind==='delivery'?'/api/driver/trips/'+encodeURIComponent(row.tripId)+'/deliveries':base(row.tripId)+'/'+row.kind;
+      const path=['delivery','fuel'].includes(row.kind)?'/api/driver/trips/'+encodeURIComponent(row.tripId)+'/'+(row.kind==='fuel'?'fuel':'deliveries'):base(row.tripId)+'/'+row.kind;
       await request(path,row.payload);
       if(!active(stamp))return;
       await store.remove(row.id);
       if(row.kind==='delivery')await store.remove('draft-delivery-'+row.tripId+'-'+row.payload.load_id);
+      if(row.kind==='fuel')await store.remove('draft-fuel-'+row.tripId);
      }catch(e){
       if(!active(stamp))return;
       if(e.status===401||e.status===403){storageError='Acceso no validado. Conservamos tus pendientes; inicia sesión o consulta a administración.';return;}
-      if(e.status&&e.status<500){row.state='review';row.error=e.message;await store.put(row.id,row);blocked.add(String(row.tripId));}
+      if(e.status&&e.status<500){row.state='review';row.error=e.message;await store.put(row.id,row);if(row.kind!=='fuel')blocked.add(String(row.tripId));}
       else{storageError='Sin confirmación del servidor. Conservamos el envío para reintentar con la misma identificación.';return;}
      }
     }
@@ -68,6 +70,21 @@
   host.innerHTML=`<h2>Pendientes del teléfono (${rows.length})</h2><p>Guardado local no significa recibido por FleetChile. Sincroniza antes de cerrar sesión. El navegador puede borrar sus datos; no es un respaldo.</p>${storageError?`<p class="driver-error" role="alert">${esc(storageError)}</p>`:''}<button class="driver-button" data-sync>Sincronizar pendientes</button><div>${rows.map(r=>`<div class="driver-mobile-pending"><b>${esc(actionLabels[r.kind]||r.kind)} · Viaje #${esc(r.tripId)}</b><span>${r.state==='draft'?'Borrador local':r.state==='review'?'Requiere revisión con operaciones':'Pendiente de confirmación'}</span>${r.error?`<p>${esc(r.error)}</p>`:''}${r.state==='draft'?'<small>Abre el viaje para recuperar este borrador en su formulario.</small>':''}<button class="driver-link" data-discard="${esc(r.id)}">Descartar del teléfono</button></div>`).join('')}</div>`;
   host.querySelector('[data-sync]').onclick=async e=>{e.target.disabled=true;storageError='';await sync();e.target.disabled=false;};
   host.querySelectorAll('[data-discard]').forEach(b=>b.onclick=async()=>{if(confirm('¿Descartar este registro local? No elimina lo ya recibido por el servidor y no podrá recuperarse aquí.')){await vault.remove(b.dataset.discard);await renderOutbox();}});
+  for(const row of rows.filter(r=>r.state==='review'&&['delivery','fuel'].includes(r.kind))){
+   const discard=[...host.querySelectorAll('[data-discard]')].find(b=>b.dataset.discard===row.id);
+   const button=document.createElement('button');button.className='driver-link';button.textContent='Comprobar recepción';discard.before(button);
+   button.onclick=async()=>{button.disabled=true;try{await reconcile(row.id);}catch(e){storageError=e.message;await renderOutbox();}finally{button.disabled=false;}};
+  }
+ }
+ async function reconcile(id){
+  const store=requireVault(),stamp=generation,row=await store.get(id);if(!row||!active(stamp))return false;
+  const path='/api/driver/trips/'+encodeURIComponent(row.tripId)+'/'+(row.kind==='fuel'?'fuel':'deliveries');
+  if(!['fuel','delivery'].includes(row.kind))return false;
+  const data=await request(path);if(!active(stamp))return false;
+  const received=row.kind==='fuel'?data.rows?.some(r=>r.client_key===row.payload.client_key&&r.result?.photo_received):data.deliveries?.some(l=>String(l.id)===String(row.payload.load_id)&&l.deliveries?.some(p=>p.client_submission_id===row.payload.client_submission_id&&p.status==='CLOSED'&&p.evidence?.some(f=>f.type==='signature'&&f.exists)&&(row.payload.photo?p.evidence?.some(f=>f.type==='photo'&&f.exists):true)));
+  if(!received)throw Error('El servidor no confirmó este envío. Se conserva íntegro en el teléfono; consulta a operaciones. No se reabre ni modifica el viaje.');
+  await store.remove(row.id);await store.remove(row.kind==='fuel'?'draft-fuel-'+row.tripId:'draft-delivery-'+row.tripId+'-'+row.payload.load_id);
+  storageError='Recepción comprobada en el servidor.';await renderOutbox();return true;
  }
  function mountOutbox(){
   if(!vault&&!storageError)return;
@@ -81,6 +98,7 @@
    try{
     const ctx=await request(base(trip.id));if(!active(stamp)||!host.isConnected)return;
     contexts.set(String(trip.id),ctx);
+    if(window.DriverFuel&&!detail.querySelector('[data-driver-fuel]'))await window.DriverFuel.mount(trip,detail,ctx);
     const stop=ctx.next_stop,at=Boolean(stop?.actual_arrival),closed=['Completado','Cancelado'].includes(ctx.status);
     host.innerHTML=`<h2>Mi recorrido</h2><p>${ctx.accepted_at?'Asignación aceptada y confirmada':'La aceptación no inicia el viaje ni reemplaza el checklist.'}</p>${!ctx.accepted_at&&!closed?'<button class="driver-button" data-accept>Aceptar viaje</button>':''}${stop?`<h3>Próxima parada: ${esc(stop.location?.name||stop.key)}</h3><p>${esc(stop.location?.address||'')} · ${esc(purposeLabels[stop.purpose]||stop.purpose)}</p><p>Previsto: ${esc(new Date(stop.planned_arrival).toLocaleString('es-CL'))}</p><button class="driver-button" data-action="${at?'depart':'arrive'}" ${closed?'disabled':''}>${at?'Registrar salida':'Registrar llegada'}</button><div>${ctx.loads.filter(l=>l.pickup===stop.key||l.delivery===stop.key).map(l=>`<div class="driver-mobile-load"><b>${esc(l.cargo)} · ${esc(l.client_name)}</b><span>${l.pickup===stop.key?'Recogida':'Entrega'} · ${esc(l.remaining_kg??l.weight_kg??'Peso pendiente')} kg pendientes</span>${l.pickup===stop.key&&!l.picked_up&&at?`<button class="driver-button" data-pickup="${esc(l.id)}">Confirmar recogida</button>`:''}${l.delivery===stop.key&&l.status!=='Entregada'?`<p>La entrega con firma se registra en Entregas, más abajo.</p>${at?`<button class="driver-link" data-exception="${esc(l.id)}">Entrega parcial, fallida o solicitar reprogramación</button>`:''}`:''}</div>`).join('')}</div>`:ctx.version?'<p>Paradas finalizadas. Revisa las cargas antes de completar el viaje.</p>':'<p>Este viaje no tiene itinerario multientrega. Conserva el circuito de entregas habitual.</p>'}${!closed&&ctx.version?'<button class="driver-link" data-delay>Registrar incidente o demora</button>':''}<div data-mobile-message role="status" aria-live="polite"></div><div data-event-form></div>`;
     const refreshButton=document.createElement('button');refreshButton.className='driver-link';refreshButton.textContent='Actualizar recorrido';refreshButton.onclick=refresh;host.prepend(refreshButton);
@@ -150,9 +168,11 @@
   async logout(){const store=vault;if(store){const rows=await store.list();if(rows.length&&!confirm('Hay '+rows.length+' registros locales. Cerrar sesión los eliminará de este teléfono. Cancela y sincroniza si deseas conservarlos.'))return false;generation++;vault=null;contexts.clear();await store.purge();}generation++;identity='';vault=null;contexts.clear();return true;},
   context:id=>contexts.get(String(id)),
   async ensureContext(id){const stamp=generation,ctx=contexts.get(String(id))||await request(base(id));if(!active(stamp))throw Error('La sesión cambió');contexts.set(String(id),ctx);return ctx;},
+  pending:async id=>requireVault().get(id),
   draft:async(id,value)=>{const store=requireVault();return value?store.put(id,value):store.get(id);},
   async delivery(tripId,payload){await queue(tripId,'delivery',payload,payload.client_submission_id);return {pending:Boolean(await vault.get(payload.client_submission_id))};},
-  sync
+  async fuel(tripId,payload){await queue(tripId,'fuel',payload,payload.client_key);return {pending:Boolean(await vault.get(payload.client_key))};},
+  reconcile,sync
  };
  window.addEventListener('online',()=>{if(Auth.user&&vault)sync();else if(Auth.token)authBoot();});
 })();

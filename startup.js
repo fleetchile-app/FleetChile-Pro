@@ -22,6 +22,8 @@ MIGRATION_FILES.push('045_ors_request_budget.sql');
 MIGRATION_FILES.push('046_fuel_financial_support.sql');
 MIGRATION_FILES.push('047_fuel_support_links.sql');
 MIGRATION_FILES.push('048_company_admin_revenue_resolution.sql');
+MIGRATION_FILES.push('049_driver_fuel.sql');
+MIGRATION_FILES.push('050_fuel_corrections.sql');
 
 function timeoutMs(value,fallback){
   const parsed=Number(value);

@@ -36,6 +36,27 @@ test('cambio de cuenta no expone ni envía pendientes de otro conductor',async()
  const s=surface({online:false});await s.internals.queue(7,'accept',{client_key:'accept-1'},'accept-1');
  s.Auth.user={...s.Auth.user,id:9,company_id:10,driver_id:11};s.api.bind();s.sandbox.navigator.onLine=true;await s.api.sync();assert.equal((await s.internals.getVault().list()).length,0);assert.equal(s.calls.filter(c=>c.options?.method==='POST').length,0);
 });
+
+test('combustible offline conserva foto y clave; un conflicto no bloquea eventos posteriores',async()=>{
+ let fail=true;const s=surface({online:false,post:async path=>{if(path.endsWith('/fuel')&&fail)throw Object.assign(Error('Versión antigua'),{status:409});return {};}});
+ await s.api.fuel(7,{client_key:'fuel-stable',photo:'data:image/jpeg;base64,fixture',total_clp:65000});
+ await s.internals.queue(7,'events',{event_key:'arrive-after-fuel',kind:'arrive',stop_key:'s0'},'arrive-after-fuel');
+ s.sandbox.navigator.onLine=true;await s.api.sync();
+ const rows=await s.internals.getVault().list();assert.equal(rows.length,1);assert.equal(rows[0].kind,'fuel');assert.equal(rows[0].state,'review');assert.equal(rows[0].payload.photo,'data:image/jpeg;base64,fixture');
+ assert.equal(s.calls.filter(c=>c.path.endsWith('/events')).length,1);
+ fail=false;await s.api.sync();assert.equal((await s.internals.getVault().list()).length,1,'No reenvía automáticamente un conflicto');
+});
+
+test('comprobar recepción de POD solo retira un pendiente con evidencia y la misma clave',async()=>{
+ let received=false;const s=surface({post:async(path,options)=>{
+  if(options?.method==='POST')throw Object.assign(Error('Viaje cerrado'),{status:409});
+  return {deliveries:[{id:8,deliveries:received?[{status:'CLOSED',client_submission_id:'pod-review',evidence:[{type:'signature',exists:true},{type:'photo',exists:true}]}]:[]}]};
+ }});
+ await s.api.delivery(7,{client_submission_id:'pod-review',load_id:8,signature:'firma',photo:'foto'});
+ await assert.rejects(s.api.reconcile('pod-review'),/conserva íntegro/);assert.equal((await s.internals.getVault().list()).length,1);
+ received=true;assert.equal(await s.api.reconcile('pod-review'),true);assert.equal((await s.internals.getVault().list()).length,0);
+ assert.equal(s.calls.filter(c=>c.options?.method==='POST').length,1);
+});
 test('doble sincronización comparte trabajo y logout elimina solo el almacén local confirmado por usuario',async()=>{
  let finish;const s=surface({online:false,post:()=>new Promise(resolve=>{finish=resolve;})});
  await s.internals.queue(7,'accept',{client_key:'fixed'},'fixed');s.sandbox.navigator.onLine=true;

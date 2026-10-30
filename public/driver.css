@@ -165,6 +165,8 @@
 .driver-location-panel .driver-gps-controls>button:focus-visible{outline:3px solid #0f67a9;outline-offset:3px}
 .driver-location-panel .driver-gps-controls>button:disabled{background:#f4f8fb;color:#60758a;border-color:#ccd9e5;cursor:default}
 .driver-location-panel[hidden],.driver-location-panel [hidden]{display:none!important}
+.driver-fuel [data-fuel-preview]{max-width:100%;max-height:300px;object-fit:contain;border:1px solid #ccd9e5;border-radius:8px}
+.driver-fuel input[type=file]{max-width:100%;box-sizing:border-box}
 @media(max-width:480px){
   .driver-location-panel .driver-gps-controls{grid-template-columns:minmax(0,1fr)}
 }

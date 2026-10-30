@@ -79,7 +79,7 @@ function registerFinanceRoutes(app,pool){
   }));
  });
  route('get',SOURCES,'economics.read',async(req,res,cid)=>{
-  const page=E.id(req.query.page||1,'Página');res.json({rows:(await pool.query('select s.*,coalesce(a.used,0) allocated_clp,s.amount_clp-coalesce(a.used,0) remaining_clp from economic_sources s left join (select a.source_id,sum(a.amount_clp) used from economic_source_allocations a where not exists(select 1 from economic_source_reversals x where x.allocation_id=a.id) group by a.source_id) a on a.source_id=s.id where s.company_id=$1 order by s.id desc limit 25 offset $2',[cid,(page-1)*25])).rows,page,page_size:25});
+  const page=E.id(req.query.page||1,'Página');res.json({rows:(await pool.query('select s.*,coalesce(a.used,0) allocated_clp,s.amount_clp-coalesce(a.used,0) remaining_clp from economic_sources s left join (select a.source_id,sum(a.amount_clp) used from economic_source_allocations a where not exists(select 1 from economic_source_reversals x where x.allocation_id=a.id) group by a.source_id) a on a.source_id=s.id where s.company_id=$1 and not exists(select 1 from fuel_corrections fc where fc.previous_fuel_id=s.fuel_id) order by s.id desc limit 25 offset $2',[cid,(page-1)*25])).rows,page,page_size:25});
  });
  route('get',SOURCES+'/fuel-options','economics.read',async(req,res,cid)=>{
   const page=E.id(req.query.page||1,'Página');res.json({rows:(await pool.query('select f.id,f.date,f.truck,f.total_clp,f.station from fuel f where f.company_id=$1 and f.total_clp is not null and not exists(select 1 from economic_sources s where s.fuel_id=f.id) order by f.id desc limit 25 offset $2',[cid,(page-1)*25])).rows,page,page_size:25});

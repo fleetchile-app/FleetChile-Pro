@@ -7,7 +7,7 @@ function provision(body){
  const price=empty?null:Number(body.price_clp);
  if(!pending&&(!['number','string'].includes(typeof body.price_clp)||!Number.isFinite(price)||price<=0))fail('price_clp debe ser mayor que cero');
  const supply=body.supply_type??'unspecified',payment=body.payment_method??'unspecified',reference=body.receipt_reference??'';
- if(!['unspecified','internal','external'].includes(supply)||!['unspecified','cash','card','agreement','internal'].includes(payment))fail('Tipo de abastecimiento o medio de pago no válido');
+ if(!['unspecified','internal','external'].includes(supply)||!['unspecified','cash','card','debit','credit','agreement','internal'].includes(payment))fail('Tipo de abastecimiento o medio de pago no válido');
  if(typeof reference!=='string'||reference.length>160||/[\x00-\x1f]/.test(reference))fail('Referencia no válida');
  return {price,supply,payment,reference:reference.trim()||null};
 }
