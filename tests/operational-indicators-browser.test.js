@@ -19,15 +19,15 @@ test('indicadores operativos abren detalle coherente, fichas, filtros GPS y reto
    };
    window.fetch=async url=>Response.json(responses[url]||[]);
   });
-  await page.addScriptTag({path:path.join(__dirname,'../public/control-ui.js')});await page.evaluate(()=>controlDashboard());
+  await page.addScriptTag({path:path.join(__dirname,'../public/linked-trip.js')});await page.addScriptTag({path:path.join(__dirname,'../public/control-ui.js')});await page.evaluate(()=>controlDashboard());
   assert.equal(await page.locator('.operational-counter').count(),6);assert.equal(await page.locator('#operationalDetail').isVisible(),false);
   const panel=page.locator('#operationalDetail');
   for(const [mode,count,expected,excluded] of [['all',3,'V-1','V-4'],['transit',1,'V-1','V-2'],['stopped',1,'V-2','V-1'],['missing',1,'V-3','V-2']]){
    await page.locator(`[data-indicator="${mode}"]`).click();assert.equal(await panel.isVisible(),true);assert.equal(await panel.locator('.control-trip-row').count(),count);assert.match(await panel.innerText(),new RegExp(expected));assert.doesNotMatch(await panel.innerText(),new RegExp(excluded));assert.equal(await page.locator('#operationalDetailTitle').evaluate(el=>el===document.activeElement),true);
   }
-  await page.locator('[data-indicator="stopped"]').click();await panel.locator('.control-trip-row').click();assert.deepEqual(await page.evaluate(()=>opened.pop()),['trip',2]);
+  await page.locator('[data-indicator="stopped"]').click();assert.equal(await panel.locator('.control-trip-row').getAttribute('href'),'/?trip=2&company=10');assert.equal(await panel.locator('.control-trip-row').getAttribute('target'),'_blank');await panel.getByRole('button',{name:'Vista rápida'}).click();assert.deepEqual(await page.evaluate(()=>opened.pop()),['trip',2]);
   await page.evaluate(()=>controlDashboard());assert.match(await panel.innerText(),/Detenidos/);assert.equal(await panel.locator('.control-trip-row').count(),1);
-  await page.locator('[data-indicator="alerts"]').click();assert.equal(await panel.locator('.control-alert').count(),2);assert.doesNotMatch(await panel.innerText(),/Resuelta|Ajena/);await panel.getByRole('button',{name:'Ver viaje',exact:true}).click();assert.deepEqual(await page.evaluate(()=>opened.pop()),['trip',2]);await panel.getByRole('button',{name:'Ver camión',exact:true}).click();assert.deepEqual(await page.evaluate(()=>opened.pop()),['truck',1]);
+  await page.locator('[data-indicator="alerts"]').click();assert.equal(await panel.locator('.control-alert').count(),2);assert.doesNotMatch(await panel.innerText(),/Resuelta|Ajena/);assert.equal(await panel.getByRole('link',{name:'Ver viaje (nueva pestaña)',exact:true}).getAttribute('href'),'/?trip=2&company=10');await panel.getByRole('button',{name:'Ver camión',exact:true}).click();assert.deepEqual(await page.evaluate(()=>opened.pop()),['truck',1]);
   await page.locator('[data-indicator="gps"]').click();assert.match(await panel.innerText(),/1 con señal reciente de 2/);assert.equal(await panel.locator('.fleet-status-row').count(),2);
   await panel.getByRole('button',{name:'Señal reciente',exact:true}).click();assert.equal(await panel.locator('.fleet-status-row').count(),1);assert.match(await panel.innerText(),/AA1111/);await panel.locator('.fleet-status-row').click();assert.deepEqual(await page.evaluate(()=>opened.pop()),['truck',1]);
   await panel.getByRole('button',{name:'Sin señal reciente',exact:true}).click();assert.match(await panel.innerText(),/BB2222/);assert.doesNotMatch(await panel.innerText(),/AA1111|AJENO/);

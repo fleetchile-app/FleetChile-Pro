@@ -1,10 +1,29 @@
 (function(){
+ const valid=value=>/^[1-9]\d*$/.test(String(value||''))&&Number.isSafeInteger(Number(value));
+ const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ // Navigation only: the destination still authenticates and checks the company and API permissions.
+ window.tripWorkspaceUrl=function(id,company){
+  const user=Auth.user;if(!user||!valid(id))return null;
+  const platform=user.actor_type==='platform'&&user.platform_membership_id;
+  const legacy=user.role_code==='admin'&&!user.membership_id&&!user.platform_membership_id;
+  const current=platform?localStorage.getItem('fleet_company_context'):user.company_id;
+  const target=company??current;
+  if(!valid(target)||!legacy&&String(target)!==String(current))return null;
+  return '/?trip='+encodeURIComponent(id)+'&company='+encodeURIComponent(target);
+ };
+ window.tripWorkspaceLink=function(id,company,label='Abrir ficha completa ↗'){
+  const url=window.tripWorkspaceUrl(id,company);
+  return url?`<a class="primary trip-workspace-link" href="${url}" target="_blank" rel="noopener noreferrer" aria-label="${escape(label)} (nueva pestaña)">${escape(label)}</a>`:'<span class="muted">Ficha completa no disponible para este contexto.</span>';
+ };
  let opened=false,active=false,identity=null,token='',context='';
  window.isLinkedTripCurrent=()=>active&&Auth.user===identity&&Auth.token===token&&(localStorage.getItem('fleet_company_context')||'')===context;
  window.stopLinkedTrip=()=>{
   if(!active)return;active=false;
   document.getElementById('drawer').classList.add('hidden');
   document.getElementById('drawerBody').innerHTML='';
+  document.getElementById('modal')?.classList.add('hidden');
+  const form=document.getElementById('form');if(form)form.innerHTML='';
+  window.currentTripId=null;window.loadedOperationalTrip=null;
  };
  window.addEventListener?.('storage',event=>{
   if(!active||!['fleet_token','fleet_company_context'].includes(event.key)||window.isLinkedTripCurrent())return;
@@ -17,7 +36,6 @@
   if(opened||!params.has('trip'))return;
   opened=true;
   const trip=params.get('trip'),company=params.get('company');
-  const valid=value=>/^[1-9]\d*$/.test(value||'')&&Number.isSafeInteger(Number(value));
   const drawer=document.getElementById('drawer'),body=document.getElementById('drawerBody');
   window.linkedTripView=true;document.body.classList.add('linked-trip-view');
   drawer.classList.remove('hidden');

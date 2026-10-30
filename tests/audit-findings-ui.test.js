@@ -5,7 +5,8 @@ for(const [label,user,search,expected] of [
  ['plataforma',{actor_type:'platform',platform_membership_id:1,permissions:['platform.users.manage']},'','platform'],
  ['empresa',{actor_type:'company',company_id:1,permissions:['economics.read']},'','linked'],
  ['enlace viaje',{actor_type:'platform',platform_membership_id:1,permissions:['platform.users.manage']},'?trip=3&company=80','linked'],
- ['soporte',{actor_type:'platform',role_code:'platform_support',platform_membership_id:1},'','support']
+ ['soporte',{actor_type:'platform',role_code:'platform_support',platform_membership_id:1},'','support'],
+ ['enlace viaje de soporte',{actor_type:'platform',role_code:'platform_support',platform_membership_id:1},'?trip=3&company=80','linked']
 ])test('inicio compatible sin ampliar permisos: '+label,async()=>{
  const calls=[],el={classList:{add(){},remove(){}},textContent:''},source=fs.readFileSync(require.resolve('../public/auth'),'utf8').split(/\r?\n/).find(l=>l.startsWith('async function authBoot'));
  const context={Auth:{user,token:'synthetic',async status(){return {};},async me(){},async logout(){throw Error('No debe cerrar sesión');}},document:{body:{dataset:{}},querySelector:()=>el,getElementById:()=>el},authBox:()=>el,renderActiveIdentity:async()=>{},location:{search},URLSearchParams,window:{platformAdministration:async tab=>calls.push(tab==='support'?'support':'platform'),openLinkedTrip:async()=>calls.push('linked')}};

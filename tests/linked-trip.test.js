@@ -20,6 +20,18 @@ test('enlace abre el viaje una sola vez tras autenticación, sin cambiar empresa
 test('no altera la pantalla normal cuando no hay enlace',async()=>{
  const s=surface({search:''});await s.sandbox.openLinkedTrip();assert.equal(s.classes.size,0);assert.deepEqual(s.calls,[]);
 });
+
+test('enlaces de ficha completa conservan empresa y no escriben almacenamiento',()=>{
+ const s=surface();assert.equal(s.sandbox.tripWorkspaceUrl(7,10),'/?trip=7&company=10');assert.equal(s.sandbox.tripWorkspaceUrl(7),'/?trip=7&company=10');assert.equal(s.sandbox.tripWorkspaceUrl(7,20),null);assert.equal(s.sandbox.tripWorkspaceUrl('7);alert(1)',10),null);
+ assert.match(s.sandbox.tripWorkspaceLink(7,10),/target="_blank" rel="noopener noreferrer"/);assert.deepEqual(s.writes,[]);
+ const platform=surface({user:{id:1,actor_type:'platform',platform_membership_id:3},context:'10'});assert.equal(platform.sandbox.tripWorkspaceUrl(7),'/?trip=7&company=10');assert.equal(platform.sandbox.tripWorkspaceUrl(7,20),null);
+ const global=surface({user:{id:1,actor_type:'platform',platform_membership_id:3},context:''});assert.equal(global.sandbox.tripWorkspaceUrl(7),null);
+});
+
+test('la integración completa se carga después de itinerario economía y POD sin reemplazar sus validaciones',()=>{
+ const html=fs.readFileSync(require.resolve('../public/index.html'),'utf8');for(const f of ['equipment.js','itinerary.js','finance.js','pod-evidence.js'])assert.ok(html.indexOf(f)<html.indexOf('trip-workspace.js'));
+ assert.match(html,/href="trip-workspace.css"/);
+});
 test('IDs ausentes duplicados o no enteros no se interpolan en la ficha',async()=>{
  for(const search of ['?trip=7','?trip=7x&company=10','?trip=1e2&company=10','?trip=-1&company=10','?trip=7&trip=8&company=10','?trip=9007199254740992&company=10','?trip=7&company=10&company=20']){
   const s=surface({search});await s.sandbox.openLinkedTrip();assert.deepEqual(s.calls,[]);assert.match(s.elements.linkedTripError.textContent,/no es válido/);
