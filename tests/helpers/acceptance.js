@@ -14,6 +14,7 @@ async function harness(pool){
  require('../../personnel-api').registerPersonnelRoutes(app,pool,{resolveActorContext:auth.resolveActorContext,hashPassword,reauthenticateUser:auth.reauthenticateUser});
  require('../../economics-api').registerEconomicsRoutes(app,pool);require('../../finance-api').registerFinanceRoutes(app,pool);require('../../commercial-api').registerCommercialRoutes(app,pool);
  require('../../enterprise-api').registerEnterpriseRoutes(app,pool);
+ const purgeErrors=[];require('../../company-purge-api').registerCompanyPurge(app,pool,{storage,onError:e=>purgeErrors.push(e)});
  require('../../itinerary-api').registerItineraryRoutes(app,pool,{async route(a,b){return {distance_meters:1000,duration_seconds:600,provider:'synthetic-acceptance-not-real-routing',calculated_at:new Date().toISOString(),geometry:{type:'LineString',coordinates:[[a.lng,a.lat],[b.lng,b.lat]]}};}});
  const middleware=auth.authMiddleware.bind(null,pool),commercial=require('../../commercial-gate').commercialGate(pool);
  async function session(userId){const token=crypto.randomBytes(32).toString('hex');await pool.query("insert into user_sessions(user_id,token_hash,expires_at) values($1,$2,now()+interval '1 hour')",[userId,crypto.createHash('sha256').update(token).digest('hex')]);return token;}
@@ -30,6 +31,6 @@ async function harness(pool){
   const res={statusCode:200,headers:{},status(n){this.statusCode=n;return this},json(v){this.payload=v;return this},send(v){this.payload=v;return this},sendStatus(n){this.statusCode=n;return this},set(k,v){this.headers[k]=v;return this},type(v){this.headers.type=v;return this}};
   const handlers=[middleware,commercial,...matching.flatMap(r=>r.handlers)];async function next(i){if(i>=handlers.length)return;let work;await handlers[i](req,res,()=>work=next(i+1));if(work)await work;}await next(0);return res;
  }
- return {one,run,session,account,company,objects,storage,password};
+ return {one,run,session,account,company,objects,storage,password,purgeErrors};
 }
 module.exports={initialize,embedded,harness,password};

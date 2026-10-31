@@ -15,3 +15,7 @@
 .company-facts dt{font-size:11px;color:#64788d;font-weight:700}
 .company-facts dd{margin:6px 0 0;font-size:13px;color:#173b5d;overflow-wrap:anywhere}
 @media(max-width:700px){.company-facts{grid-template-columns:1fr}}
+.company-purge label{display:block;margin:14px 0;color:#173b5d;font-weight:600}
+.company-purge input:not([type=checkbox]),.company-purge select,.company-purge textarea{display:block;width:100%;max-width:620px;box-sizing:border-box;margin-top:6px;padding:10px;border:1px solid #cbdbea;border-radius:6px;background:#fff;color:#173b5d;font:inherit}
+.company-purge blockquote{margin:16px 0;padding:16px;border-left:4px solid #b42318;background:#fff5f4;color:#8c1c13;font-weight:700;letter-spacing:.03em;overflow-wrap:anywhere}
+.company-purge article{padding:12px 0;border-bottom:1px solid #e0e8f0}

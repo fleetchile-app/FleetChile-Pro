@@ -25,7 +25,7 @@ function createStorage({env=process.env,client}={}){
   const put=async({key,body,mimeType,size,metadata={},signal})=>{if(!key||typeof key!=='string'||key.includes('..')||key.startsWith('/'))throw new TypeError('storage_key inválido');try{await s3.send(new PutObjectCommand({Bucket:config.bucket,Key:key,Body:body,ContentType:mimeType,ContentLength:size,Metadata:metadata}),{abortSignal:signal});return {key};}catch(error){throw new StorageOperationError('put',error)}};
   const get=async(key,{signal}={})=>{if(!key||typeof key!=='string'||key.includes('..')||key.startsWith('/'))throw new TypeError('storage_key inválido');try{return await s3.send(new GetObjectCommand({Bucket:config.bucket,Key:key}),{abortSignal:signal});}catch(error){throw new StorageOperationError('get',error)}};
   const head=async key=>{if(!key||typeof key!=='string'||key.includes('..')||key.startsWith('/'))throw new TypeError('storage_key inválido');try{return await s3.send(new HeadObjectCommand({Bucket:config.bucket,Key:key}));}catch(error){throw new StorageOperationError('head',error)}};
-  const remove=async key=>{if(!key||typeof key!=='string'||key.includes('..')||key.startsWith('/'))throw new TypeError('storage_key inválido');try{await s3.send(new DeleteObjectCommand({Bucket:config.bucket,Key:key}));return {key};}catch(error){throw new StorageOperationError('delete',error)}};
+  const remove=async(key,{signal}={})=>{if(!key||typeof key!=='string'||key.includes('..')||key.startsWith('/'))throw new TypeError('storage_key inválido');try{await s3.send(new DeleteObjectCommand({Bucket:config.bucket,Key:key}),{abortSignal:signal});return {key};}catch(error){throw new StorageOperationError('delete',error)}};
   return {config,put,get,head,delete:remove};
 }
 

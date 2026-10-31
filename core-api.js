@@ -108,5 +108,10 @@ function registerCoreRoutes(app,pool,{assertTripResourcesReady=defaultTripReadin
  app.patch('/api/driver-documents/:id',requirePermission('documents.manage'),async(req,res)=>{try{const filter=isAdmin(req)?'true':'d.company_id=$2',values=isAdmin(req)?[req.params.id]:[req.params.id,companyId(req)];const current=(await pool.query(`select dd.* from driver_documents dd join drivers d on d.id=dd.driver_id where dd.id=$1 and ${filter}`,values)).rows[0];if(!current)return res.sendStatus(404);const input=documentInput(body(req),{partial:true,current});if(input.error)return res.status(400).json({error:input.error});const r=await pool.query('update driver_documents set document_type=$1,document_number=$2,issued_at=$3,expires_at=$4,status=$5,file_url=$6,notes=$7 where id=$8 returning *',[input.type,input.number,input.issued,input.expires,input.status,input.fileUrl,input.notes,current.id]);res.json(r.rows[0])}catch(e){res.status(400).json({error:'No se pudo actualizar el documento'})}});
  app.get('/api/audit',requirePermission('audit.read'),async(req,res)=>{const s=scoped(req,'a');try{res.json((await pool.query(`select a.*,u.name user_name,c.legal_name company_name from audit_logs a left join users u on u.id=a.user_id left join companies c on c.id=a.company_id where ${s.sql} order by a.created_at desc limit 200`,s.values)).rows)}catch(e){res.status(500).json({error:'No se pudo consultar auditoría'})}});
 }
-async function initializeCorePlatform(pool){await pool.query(CORE_MIGRATION)}
+async function initializeCorePlatform(pool,{skipDemo=false}={}){
+ const marker='INSERT INTO companies(legal_name,trade_name,rut,region) VALUES';
+ const boundary=CORE_MIGRATION.indexOf(marker);
+ if(skipDemo&&boundary<0)throw Error('No se pudo separar el bootstrap demo del esquema');
+ await pool.query(skipDemo?CORE_MIGRATION.slice(0,boundary):CORE_MIGRATION);
+}
 module.exports={registerCoreRoutes,initializeCorePlatform};

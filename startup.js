@@ -24,6 +24,7 @@ MIGRATION_FILES.push('047_fuel_support_links.sql');
 MIGRATION_FILES.push('048_company_admin_revenue_resolution.sql');
 MIGRATION_FILES.push('049_driver_fuel.sql');
 MIGRATION_FILES.push('050_fuel_corrections.sql');
+MIGRATION_FILES.push('051_company_purge.sql');
 
 function timeoutMs(value,fallback){
   const parsed=Number(value);
@@ -51,14 +52,16 @@ async function initializeDatabase(pool,{baseDir=__dirname,initializeCorePlatform
     logger.log('[STARTUP] schema inicializado');
 
     stage='seed';
+    const purgeRegistry=(await db.query("select to_regclass('public.platform_company_purge_jobs') is not null available")).rows[0]?.available;
+    const suppressDemo=purgeRegistry?Boolean((await db.query('select exists(select 1 from platform_company_purge_jobs) suppressed')).rows[0]?.suppressed):false;
     const {rows}=await db.query('select count(*)::int as count from trucks');
-    if(rows[0].count===0){
+    if(rows[0].count===0&&!suppressDemo){
       await db.query(fs.readFileSync(path.join(baseDir,'seed.sql'),'utf8'));
       logger.log('[STARTUP] datos demo inicializados');
     }
 
     stage='core platform';
-    await initializeCorePlatform(db);
+    await initializeCorePlatform(db,{skipDemo:suppressDemo});
     logger.log('[STARTUP] core platform inicializada');
 
     for(const file of MIGRATION_FILES){

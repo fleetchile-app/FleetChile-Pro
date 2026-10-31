@@ -6,6 +6,7 @@ const companyView=async(db,id,forUpdate=false)=>(await db.query(`select id,legal
 const settingView=async(db,key,forUpdate=false)=>(await db.query(`select id,setting_key,category,label,value,description,updated_at,updated_by from system_settings where setting_key=$1${forUpdate?' for update':''}`,[key])).rows[0]||null;
 
 function registerAdminRoutes(app,pool){
+  require('./company-purge-api').registerCompanyPurge(app,pool);
   app.get('/api/public/settings',async(req,res)=>{try{const r=await pool.query("select setting_key,value from system_settings where setting_key in ('appearance.company_name','appearance.language')");const out={};for(const x of r.rows)out[x.setting_key]=x.value;res.json(out)}catch(e){res.status(500).json({error:'No se pudo cargar la configuración pública'})}});
   // LEGACY NAME: every /api/admin route is platform-scoped; legacy admin is temporary compatibility only.
   const adminOnly=(req,res,next)=>{const legacy=req.user?.role_code==='admin'&&!req.user?.membership_id&&!req.user?.platform_membership_id;const isCompanyRoute=typeof req.path==='string'&&req.path.includes('/companies/');const expected=isCompanyRoute?['platform.companies.manage']:['platform.companies.manage','platform.users.manage'];const allowed=(req.user?.actor_type==='platform'&&expected.some(p=>req.user?.permissions?.includes(p)))||legacy;if(allowed)return next();res.status(403).json({error:'Acceso restringido a administradores de plataforma'});};

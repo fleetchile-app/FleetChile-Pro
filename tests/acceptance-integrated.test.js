@@ -5,7 +5,7 @@ test('aceptación integrada: sesiones, prepago, tres entregas, incidentes, talle
  const runtime=await embedded();try{
   const {pool}=runtime,h=await harness(pool),a=await h.company('Aceptación A'),b=await h.company('Aceptación B'),platform=await h.account(null,'platform_superadmin','Plataforma sintética');let vehicle,person,driver,trip,ctx,loads=[],clients=[],order;
   const call=(token,method,url,body={},params={},query={})=>h.run(token,method,url,{body,params,query});
-  const ok=async(token,method,url,body={},params={},expected=200)=>{const r=await call(token,method,url,body,params);assert.equal(r.statusCode,expected,method+' '+url+': '+JSON.stringify(r.payload));return r.payload;};
+  const ok=async(token,method,url,body={},params={},expected=200)=>{const r=await call(token,method,url,body,params);assert.equal(r.statusCode,expected,method+' '+url+': '+JSON.stringify(r.payload)+' '+h.purgeErrors.map(e=>e.code+': '+e.message).join('; '));return r.payload;};
   const admin=(method,url,body={},params={},expected=200)=>ok(a.admin.token,method,url,body,params,expected);
   const MW='/api/fleet/work-orders',MOBILE='/api/driver/trips/:id/workflow',FIN='/api/economics/trips/:id/finance',COMM='/api/platform/commercial/companies/:companyId';
   await t.test('sesión real exige contrato, aísla empresas y crea clientes sin exigir consentimiento',async()=>{
@@ -133,6 +133,17 @@ test('aceptación integrada: sesiones, prepago, tres entregas, incidentes, talle
    state=await admin('get',FIN,{}, {id:trip.id});assert.equal(state.control.state,'open');assert.equal(state.summary.delta_clp,8000);assert.equal(state.events.length,2);
    await admin('post',FIN+'/close',{version:Number(state.control.version),reason:'Segundo cierre sin cambiar importes',password:h.password},{id:trip.id});
    assert.equal((await admin('get',FIN,{}, {id:trip.id})).events.length,3);
+  });
+  await t.test('vaciado explícito de empresa con circuito completo conserva otra empresa y limpia solo sus objetos',async()=>{
+   const base='/api/admin/company-purge',p={id:a.id},outside=`companies/${b.id}/synthetic-preserve`;
+   h.objects.set(outside,Buffer.from('otra empresa'));
+   const challenge=await ok(platform.token,'post',base+'/:id/challenge',{},p);
+   const result=await ok(platform.token,'post',base+'/:id/execute',{challenge_id:challenge.challenge_id,phrase:challenge.phrase,password:h.password,reason:'Borrar fixture sintético tras aceptación completa'},p,202);
+   assert.equal((await pool.query('select 1 from companies where id=$1',[a.id])).rows.length,0);
+   assert.ok(await h.one('select id from companies where id=$1',[b.id]));assert.ok(await h.one('select id from users where id=$1 and active=true',[platform.id]));
+   let cleanup;do{cleanup=await ok(platform.token,'post',base+'/jobs/:jobId/cleanup',{}, {jobId:result.job_id});}while(cleanup.pending);
+   assert.equal(cleanup.status,'complete');assert.equal(h.objects.size,1);assert.ok(h.objects.has(outside));
+   const leftovers=await h.one('select count(*)::int n from trips where company_id=$1',[a.id]);assert.equal(leftovers.n,0);
   });
  }finally{await runtime.close();}
 });

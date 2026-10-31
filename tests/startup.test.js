@@ -55,7 +55,7 @@ test('runner incluye la fundación económica después de alertas operacionales'
   assert.ok(MIGRATION_FILES.includes('017_revenue_authorization_values.sql'));
   assert.ok(MIGRATION_FILES.includes('018_economic_reconciliation.sql'));
   assert.ok(MIGRATION_FILES.includes('019_driver_user_assignment.sql'));
-  assert.deepEqual(MIGRATION_FILES.slice(-26),['023_platform_governance.sql','024_platform_ownership.sql','025_bootstrap_platform_owner.sql','026_global_geography_catalog.sql','027_seed_chile_dpa_2023.sql','028_trip_resource_coherence.sql','029_company_admin_permissions.sql','030_personnel_access.sql','031_client_profiles.sql','032_fleet_operational_registration.sql','033_maintenance_workorders.sql','034_fleet_compositions_assignments.sql','035_trip_itineraries.sql','036_economic_integration.sql','037_driver_mobile_workflow.sql','038_commercial_entitlements.sql','039_company_branding.sql','040_enterprise_administration.sql','041_delivery_operations.sql','042_checklist_completion.sql','043_operational_location_picker.sql','044_seed_ine_localities_2024.sql','045_ors_request_budget.sql','046_fuel_financial_support.sql','047_fuel_support_links.sql','048_company_admin_revenue_resolution.sql']);
+  assert.deepEqual(MIGRATION_FILES.slice(-29),['023_platform_governance.sql','024_platform_ownership.sql','025_bootstrap_platform_owner.sql','026_global_geography_catalog.sql','027_seed_chile_dpa_2023.sql','028_trip_resource_coherence.sql','029_company_admin_permissions.sql','030_personnel_access.sql','031_client_profiles.sql','032_fleet_operational_registration.sql','033_maintenance_workorders.sql','034_fleet_compositions_assignments.sql','035_trip_itineraries.sql','036_economic_integration.sql','037_driver_mobile_workflow.sql','038_commercial_entitlements.sql','039_company_branding.sql','040_enterprise_administration.sql','041_delivery_operations.sql','042_checklist_completion.sql','043_operational_location_picker.sql','044_seed_ine_localities_2024.sql','045_ors_request_budget.sql','046_fuel_financial_support.sql','047_fuel_support_links.sql','048_company_admin_revenue_resolution.sql','049_driver_fuel.sql','050_fuel_corrections.sql','051_company_purge.sql']);
   assert.equal(MIGRATION_FILES.filter(file=>file==='015_economic_foundation.sql').length,1);
   assert.ok(MIGRATION_FILES.indexOf('015_economic_foundation.sql')>MIGRATION_FILES.indexOf('014_operational_alerts.sql'));
   assert.ok(MIGRATION_FILES.indexOf('019_driver_user_assignment.sql')>MIGRATION_FILES.indexOf('018_economic_reconciliation.sql'));
@@ -71,6 +71,14 @@ test('runner configura timeouts antes de schema y migraciones',async()=>{
   assert.ok(calls.findIndex(call=>call.sql.includes('CREATE TABLE IF NOT EXISTS user_sessions'))>1);
   assert.equal(calls.at(-2).sql,'RESET lock_timeout; RESET statement_timeout');
   assert.equal(calls.at(-1).sql,'RELEASE');
+});
+
+test('una eliminación confirmada no reactiva semillas demo aunque no queden camiones',async()=>{
+ const calls=[];let options;
+ const client={async query(sql){calls.push(sql);if(sql.includes('to_regclass'))return {rows:[{available:true}]};if(sql.startsWith('select exists'))return {rows:[{suppressed:true}]};if(sql.startsWith('select count'))return {rows:[{count:0}]};return {rows:[]};},release(){}};
+ await initializeDatabase({connect:async()=>client},{initializeCorePlatform:async(db,o)=>{options=o;},logger:{log(){}}});
+ assert.deepEqual(options,{skipDemo:true});assert.equal(calls.some(sql=>sql.includes('LJ-KP-82')),false);
+ const bootstrap=[];await require('../core-api').initializeCorePlatform({query:async sql=>bootstrap.push(sql)},{skipDemo:true});assert.match(bootstrap[0],/CREATE TABLE IF NOT EXISTS companies/);assert.doesNotMatch(bootstrap[0],/INSERT INTO companies\(legal_name,trade_name,rut,region\) VALUES/);
 });
 
 test('error de migración identifica etapa, libera conexión y detiene migraciones siguientes',async()=>{
