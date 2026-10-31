@@ -188,7 +188,14 @@ test('PL16–PL24 PostgreSQL aislado: itinerarios, capacidad, tiempos y excepcio
    for(const p of ['/api/trips/:id/status','/api/operations/trips/:id/status']){const r=await run(f,'patch',p,{status:'En tránsito'},{id:f.trip.id});assert.equal(r.statusCode,409,JSON.stringify(r.payload));assert.equal(r.payload.code,'ITINERARY_STALE');}
    let r=await save(f,{version:1});assert.equal(r.statusCode,200,JSON.stringify(r.payload));
    const df={...f,actor:{id:f.d.u.id,company_id:f.cid,driver_id:f.d.d.id,role_code:'driver'}};
-   r=await run(df,'patch','/api/driver/trips/:id/status',{status:'En tránsito'},{id:f.trip.id});assert.equal(r.statusCode,409,JSON.stringify(r.payload));assert.equal(r.payload.code,'ITINERARY_CAPACITY_UNKNOWN');
+   r=await run(df,'patch','/api/driver/trips/:id/status',{status:'En tránsito'},{id:f.trip.id});assert.equal(r.statusCode,409,JSON.stringify(r.payload));assert.deepEqual(r.payload.allowed_statuses,[]);
+   const ctx={version:2,resource_version:f.trip.resource_version},mobile='/api/driver/trips/:id/workflow';
+   assert.equal((await run(df,'post',mobile+'/accept',{...ctx,client_key:'capacity-accept'},{id:f.trip.id})).statusCode,201);
+   assert.equal((await run(df,'post',mobile+'/checklist',{...ctx,client_key:'capacity-check',items:require('../driver-workflow-api').CHECKS.map(id=>({id,result:'ok'}))},{id:f.trip.id})).statusCode,201);
+   assert.equal((await run(df,'post',mobile+'/events',{...ctx,event_key:'capacity-arrive',kind:'arrive',stop_key:'s0'},{id:f.trip.id})).statusCode,201);
+   for(const l of f.loads)assert.equal((await run(df,'post',mobile+'/events',{...ctx,event_key:'capacity-pickup-'+l.id,kind:'pickup',stop_key:'s0',load_id:Number(l.id)},{id:f.trip.id})).statusCode,201);
+   r=await run(df,'post',mobile+'/events',{...ctx,event_key:'capacity-depart',kind:'depart',stop_key:'s0'},{id:f.trip.id});assert.equal(r.statusCode,409,JSON.stringify(r.payload));assert.equal(r.payload.code,'ITINERARY_CAPACITY_UNKNOWN');
+   assert.equal((await one("select count(*)::int n from trip_itinerary_events where trip_id=$1 and kind='depart'",[f.trip.id])).n,0);
    r=await run(f,'patch','/api/operations/trips/:id/status',{status:'Detenido'},{id:f.trip.id});assert.equal(r.statusCode,200);
   });
   await t.test('reemplazo verifica capacidad y exige nueva revisión operacional sin borrar el plan previo',async()=>{
@@ -272,6 +279,8 @@ test('PL16–PL24 PostgreSQL aislado: itinerarios, capacidad, tiempos y excepcio
    const pod={...ctx,load_id:Number(f.loads[0].id),client_submission_id:'mobile-pod-1',recipient_name:'Receptor fixture',signature};
    let r=await run(df,'post','/api/driver/trips/:id/deliveries',pod,{id:f.trip.id});assert.equal(r.statusCode,409);
    assert.equal((await send('arrive','s1')).statusCode,201);
+   const premature=await run(df,'post','/api/driver/trips/:id/deliveries',pod,{id:f.trip.id});assert.equal(premature.statusCode,409);assert.equal(premature.payload.code,'DELIVERY_UNLOADING_REQUIRED');
+   assert.equal((await run(df,'patch','/api/driver/trips/:id/status',{status:'Descargando'},{id:f.trip.id})).statusCode,200);
    assert.equal((await send('failed','s1',{load_id:Number(f.loads[0].id),reason:'Receptor ausente'})).statusCode,201);
    assert.equal((await send('partial','s1',{load_id:Number(f.loads[0].id),reason:'Solo parte',delivered_kg:1000})).statusCode,201);
    assert.equal((await send('reschedule','s1',{load_id:Number(f.loads[0].id),reason:'Solicito otra hora'})).statusCode,201);

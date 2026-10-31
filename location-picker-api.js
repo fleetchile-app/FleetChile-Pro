@@ -28,6 +28,14 @@ function registerLocationPickerRoutes(app,pool,geocoder,router,{env=process.env}
  app.get('/api/location-picker/locations',access,async(req,res)=>{
   try{res.json((await pool.query('select * from operational_locations where company_id=$1 and (name ilike $2 or address ilike $2) order by name,id limit 100',[req.locationCompanyId,'%'+clean(req.query.q,100)+'%'])).rows);}catch{res.status(500).json({error:'No se pudieron consultar las ubicaciones'});}
  });
+ app.get('/api/location-picker/locations/:id',access,async(req,res)=>{
+  const locationId=id(req.params.id);if(!locationId)return res.status(400).json({error:'Identificador de ubicación no válido'});
+  try{
+   const row=(await pool.query('select * from operational_locations where company_id=$1 and id=$2',[req.locationCompanyId,locationId])).rows[0];
+   if(!row)return res.status(404).json({error:'Ubicación no encontrada'});
+   res.json(row);
+  }catch{res.status(500).json({error:'No se pudo consultar la ubicación'});}
+ });
  app.post('/api/location-picker/search',access,async(req,res)=>{
   // Public OSM Nominatim is not a suitable place-search service for this product.
   let host;try{host=new URL(env.GEOCODING_BASE_URL||'https://nominatim.openstreetmap.org').hostname;}catch{}

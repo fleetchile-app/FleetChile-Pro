@@ -1,0 +1,9 @@
+{
+  "appId": "cl.fleetchile.driver",
+  "appName": "FleetChile Conductor",
+  "webDir": "www",
+  "loggingBehavior": "none",
+  "server": { "androidScheme": "https", "cleartext": false },
+  "android": { "allowMixedContent": false },
+  "plugins": { "CapacitorHttp": { "enabled": true } }
+}

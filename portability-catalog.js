@@ -7,6 +7,7 @@ const companyTables=[
  'client_profile_events','client_consent_documents','client_privacy_status','driver_profile_events',
  'maintenance_work_items','maintenance_findings','maintenance_meter_readings','maintenance_work_order_events',
  'fleet_compositions','fleet_composition_revisions','trip_resource_revisions','trip_itinerary_revisions','trip_itinerary_events',
+ 'operational_outings','operational_outing_services','operational_outing_events','operational_outing_positions',
  'trip_finance_control','economic_sources','economic_source_allocations','trip_budget_revisions','economic_source_reversals','trip_distribution_revisions','trip_finance_events',
  'driver_mobile_actions','commercial_requests','commercial_quotes','commercial_quote_events','commercial_contracts','commercial_equipment_seats','commercial_seat_events',
  'company_branding_revisions','company_issued_documents','company_access_profiles','enterprise_events','company_support_grants','company_support_cases','user_memberships'

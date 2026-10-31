@@ -1,6 +1,11 @@
 .trip-workspace-link{display:inline-flex;align-items:center;justify-content:center;gap:6px;text-decoration:none;font-size:12px;line-height:1.4;text-align:center;min-height:40px}
 .trip-workspace-link:focus-visible,.operational-trip-entry>a:focus-visible{outline:3px solid #1670b8;outline-offset:3px}
 .trip-workspace-actions{display:flex;gap:8px;flex-wrap:wrap}
+.outing-panel form{display:grid;gap:12px;margin:16px 0;padding:16px;border:1px solid #dfe7f0;border-radius:8px;background:#f8fbfe}
+.outing-panel label{display:grid;gap:6px}
+.outing-panel input,.outing-panel select{min-height:44px;width:100%;min-width:0;box-sizing:border-box}
+.outing-panel input[type=checkbox]{width:auto;min-height:0}
+.outing-panel [hidden]{display:none!important}
 .trip-detail-head{flex-wrap:wrap}
 .trip-workspace-note{color:#52657a;font-size:13px;line-height:1.5}
 .operational-trip-entry{border-bottom:1px solid #e9eff5;padding-bottom:6px}

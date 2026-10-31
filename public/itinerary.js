@@ -32,12 +32,12 @@
  }
  async function edit(id,data,opts){
   const token=identity(),old=data.revision?.plan,trip=opts.trip||window.loadedOperationalTrip||{},stops=old?old.stops.map(s=>({...s})):Array.from({length:2},(_,i)=>({key:key(),location_id:trip[(i?'destination':'origin')+'_location_id']||'',purpose:i?'delivery':'pickup',service_minutes:0,wait_minutes:0,rest_minutes:0}));
-  if(!old)for(const load of opts.loads)for(const [field,purpose] of [['origin','pickup'],['destination','delivery']]){
+  for(const load of opts.loads.filter(l=>!old?.loads.some(m=>String(m.load_id)===String(l.id))))for(const [field,purpose] of [['origin','pickup'],['destination','delivery']]){
    const id=load[field+'_location_id'];if(!id)continue;let stop=stops.find(s=>String(s.location_id)===String(id));
    if(!stop&&stops.length<12){stop={key:key(),location_id:id,purpose,service_minutes:0,wait_minutes:0,rest_minutes:0};stops.splice(stops.length-1,0,stop);}
    if(stop&&stop.purpose!==purpose)stop.purpose='mixed';
   }
-  let draft={departure:local(old?.departure||trip.planned_departure),contingency_minutes:old?.contingency_minutes||0,reason:'',review:old?.vehicle_review.notes||'',loads:old?.loads.map(l=>({...l}))||opts.loads.map(l=>({load_id:Number(l.id),pickup:l.origin_location_id?stops.find(s=>String(s.location_id)===String(l.origin_location_id))?.key||'':stops[0].key,delivery:l.destination_location_id?stops.find(s=>String(s.location_id)===String(l.destination_location_id))?.key||'':stops.at(-1).key}))};
+  let draft={departure:local(old?.departure||trip.planned_departure),contingency_minutes:old?.contingency_minutes||0,reason:'',review:old?.vehicle_review.notes||'',loads:opts.loads.map(l=>{const saved=old?.loads.find(m=>String(m.load_id)===String(l.id));if(saved)return {...saved};return {load_id:Number(l.id),pickup:l.origin_location_id?stops.find(s=>String(s.location_id)===String(l.origin_location_id))?.key||'':l.origin?'':stops[0].key,delivery:l.destination_location_id?stops.find(s=>String(s.location_id)===String(l.destination_location_id))?.key||'':l.destination?'':stops.at(-1).key};})};
   let form;
   const capture=()=>{
    if(!form)return;const b=Object.fromEntries(new FormData(form));draft={...draft,departure:b.departure,contingency_minutes:b.contingency_minutes,reason:b.reason,review:b.review,endpoint_ack:b.endpoint_change_ack==='true',load_ack:b.load_locations_ack==='true'};

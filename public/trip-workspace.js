@@ -24,6 +24,9 @@
    const actions=document.createElement('div');actions.className='trip-workspace-actions';
    actions.innerHTML=window.tripWorkspaceLink(id,trip.company_id);head.append(actions);
   }
+  const summary=body.querySelector('#tripPanelSummary');
+  if(summary&&window.OperationalOutingsUI)await window.OperationalOutingsUI.mount(trip,summary);
+  if(Auth.user!==user||(localStorage.getItem('fleet_company_context')||'')!==context||String(window.currentTripId)!==String(id))return result;
   const tabs=body.querySelector('.trip-tabs');
   tabs?.addEventListener('click',event=>{const button=event.target.closest('button');if(button&&button.parentElement===tabs)body.querySelectorAll('.trip-panel').forEach(panel=>panel.classList.add('hidden'));},true);
   // All extension tabs (itinerary, economics and POD) have now been attached.

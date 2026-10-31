@@ -55,7 +55,7 @@ test('combustible revierte la carga si falla la auditoría',async()=>{
 });
 
 test('historial filtra camión y fechas con orden determinista',async()=>{
-  const pool=mockPool(async(sql,values)=>{assert.match(sql,/f\.company_id=\$1 and f\.truck_id=\$2/);assert.match(sql,/q\.date >= \$3 and q\.date <= \$4/);assert.match(sql,/order by q\.date desc,q\.id desc limit 1000$/);assert.deepEqual(values,[10,3,'2026-08-01','2026-08-31']);return {rows:[],rowCount:0}});
+  const pool=mockPool(async(sql,values)=>{assert.match(sql,/f\.company_id=\$1/);assert.match(sql,/and f\.truck_id=\$2/);assert.match(sql,/not exists\(select 1 from fuel_corrections/);assert.match(sql,/q\.date >= \$3 and q\.date <= \$4/);assert.match(sql,/order by q\.date desc,q\.id desc limit 1000$/);assert.deepEqual(values,[10,3,'2026-08-01','2026-08-31']);return {rows:[],rowCount:0}});
   const app=await fuelApp(pool);const res=await invoke(app.route('get','/api/fleet/fuel'),{query:{truck_id:'3',from:'2026-08-01',to:'2026-08-31'}});
   assert.equal(res.statusCode,200);assert.deepEqual(res.payload,[]);
 });

@@ -5,7 +5,7 @@ test('ficha completa abre otra pestaña, conserva origen, secciones, formularios
  try{
   const context=await browser.newContext(),errors=[],writes=[];
   const trip={id:7,company_id:10,trip_number:'V-QA-7',status:'Planificado',origin:'Aserradero de prueba',destination:'Bodega de prueba',driver_name:'Conductora QA',client_name:'Cliente QA',truck_id:1,driver_id:2,client_id:3,patente:'AA1111',itinerary_version:0,resource_version:4,loads:[],events:[],checklists:[],proofs:[]};
-  const scripts=['executive-kpis.js','app.js','checklist-shared.js','operations-ui.js','linked-trip.js','control-ui.js','equipment.js','itinerary.js','finance.js','pod-evidence.js','trip-workspace.js'];
+  const scripts=['executive-kpis.js','app.js','checklist-shared.js','operations-ui.js','linked-trip.js','control-ui.js','equipment.js','itinerary.js','finance.js','pod-evidence.js','operational-outings.js','trip-workspace.js'];
   let index=fs.readFileSync(path.join(__dirname,'../public/index.html'),'utf8').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').replace(/<link\b[^>]*https:[^>]*>/g,'');
   const fixture=`<script>window.Auth={token:'synthetic',user:{id:1,company_id:10,actor_type:'company',role_code:'operations',permissions:['trips.manage','economics.read']},request:async(url,o={})=>{const r=await fetch(url,o);const d=await r.json();if(!r.ok)throw Error(d.error);return d;}};</script>`;
   index=index.replace('</body>',fixture+scripts.map(f=>'<script src="/'+f+'"></script>').join('')+'</body>');
@@ -17,6 +17,7 @@ test('ficha completa abre otra pestaña, conserva origen, secciones, formularios
     if(p==='/api/trips')data=[trip];
     else if(p==='/api/operations/trips/7')data=trip;
     else if(p==='/api/operations/options')data={trucks:[],drivers:[],clients:[],routes:[]};
+    else if(p==='/api/operations/trips/7/outing')data={outing:null,can_manage:true,locations:[],candidates:[],services:[],events:[]};
     else if(p==='/api/operations/trips/7/itinerary')data={version:0,resource_version:4,trip_status:'Planificado',revision:null,progress:[],loads:[],events:[],capacity:null};
     else if(p==='/api/operations/trips/7/pod')data={proofs:[]};
     else if(p==='/api/economics/trips/7')data={revenue_clp:null,revenue_defined:false};
@@ -29,7 +30,7 @@ test('ficha completa abre otra pestaña, conserva origen, secciones, formularios
    if(p==='/')return route.fulfill({contentType:'text/html',body:index});
    const file=path.join(__dirname,'../public',path.basename(p));return route.fulfill({status:fs.existsSync(file)?200:404,contentType:p.endsWith('.css')?'text/css':'text/javascript',body:fs.existsSync(file)?fs.readFileSync(file):''});
   });
-  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.setViewportSize({width:1440,height:1000});await page.goto('https://workspace.invalid/');await page.evaluate(()=>trips());
+  const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));await page.setViewportSize({width:1440,height:1000});await page.goto('https://workspace.invalid/');await page.evaluate(()=>render('trips'));
   const link=page.getByRole('link',{name:'Abrir viaje ↗ (nueva pestaña)',exact:true});assert.equal(await link.getAttribute('href'),'/?trip=7&company=10');
   const [full]=await Promise.all([page.waitForEvent('popup'),link.click()]);full.on('pageerror',e=>errors.push(e.message));await full.waitForLoadState();assert.equal(await full.evaluate(()=>window.opener),null);await full.evaluate(()=>openLinkedTrip());
   await full.locator('.trip-workspace-note').waitFor();assert.match(await full.title(),/V-QA-7/);assert.equal(await page.locator('#drawer').isVisible(),false);assert.match(await page.locator('#app').innerText(),/Viajes operacionales/);assert.match(full.url(),/trip=7&company=10/);

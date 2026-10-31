@@ -44,7 +44,14 @@ async function assertTripAvailability(db,{companyId,truckId,driverId,trailerId=n
    or ((t.planned_departure is null or t.planned_arrival is null or t.planned_departure<t.planned_arrival)
     and (t.planned_departure is null or $6::timestamptz is null or t.planned_departure<$6)
     and (t.planned_arrival is null or c.starts_at is null or t.planned_arrival>c.starts_at)))
-  order by t.id limit 20`,[companyId,truckId||null,driverId||null,tripId,start,end,executing,trailerId||null,effectiveFrom])).rows;
+  union all
+  select -o.id, 'Salida '||o.id::text,o.truck_id,o.driver_id,o.trailer_id
+  from operational_outings o where o.company_id=$1 and o.closed_at is null
+   and not exists(select 1 from operational_outing_services s where s.outing_id=o.id and s.company_id=o.company_id and s.trip_id=$4)
+   and (($2::integer is not null and ($2=o.truck_id or $2=o.trailer_id))
+    or ($3::integer is not null and $3=o.driver_id)
+    or ($8::integer is not null and ($8=o.truck_id or $8=o.trailer_id)))
+  order by id limit 20`,[companyId,truckId||null,driverId||null,tripId,start,end,executing,trailerId||null,effectiveFrom])).rows;
  if(conflicts.length)throw Object.assign(new Error('El camión, remolque o conductor ya está reservado en otro viaje durante ese período. Revisa las asignaciones y sus fechas.'),{
   status:409,code:'TRIP_RESOURCE_CONFLICT',details:{conflicts:conflicts.map(row=>({trip_id:row.id,trip_number:row.trip_number,
    truck:truckId!=null&&[row.truck_id,row.trailer_id].some(id=>String(id)===String(truckId)),driver:driverId!=null&&String(row.driver_id)===String(driverId),

@@ -9,7 +9,7 @@ const driver={id:8,role_code:'driver',company_id:10,driver_id:4};
 function assertNoSecrets(payload){const text=JSON.stringify(payload);assert.equal(text.includes('storage_key'),false);assert.equal(text.includes('s3.amazonaws'),false);assert.equal(text.includes('data:image/'),false);}
 const signature='iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAGklEQVQ4jWP4TyFgGDXg/2gY/B8Ng//DIgwAXXj8LuMlDaEAAAAASUVORK5CYII=';
 ;
-function pool({trip={id:7,company_id:10,driver_id:4,truck_id:3},load={id:9,trip_id:7,status:'Planificada'},existing=null,closed=null,files=[],fail=''}={}){const calls=[];const client={calls,async query(sql,values=[]){calls.push({sql,values});if(fail&&sql.includes(fail))throw Error('forced');if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return {rows:[],rowCount:0};
+function pool({trip={id:7,company_id:10,driver_id:4,truck_id:3,status:'Descargando'},load={id:9,trip_id:7,status:'Planificada'},existing=null,closed=null,files=[],fail=''}={}){const calls=[];const client={calls,async query(sql,values=[]){calls.push({sql,values});if(fail&&sql.includes(fail))throw Error('forced');if(['BEGIN','COMMIT','ROLLBACK'].includes(sql))return {rows:[],rowCount:0};
   if(sql.startsWith('update trip_delivery_proofs'))return {rows:[{id:21,trip_id:7,load_id:9,status:'CLOSED',client_submission_id:'submission-1',recipient_name:'Receptor',created_by:8}],rowCount:1};
   if(sql.includes('from delivery_proof_files where'))return {rows:files,rowCount:files.length};
   if(sql.includes('from trips where')){const ok=trip&&String(trip.id)===String(values[0])&&trip.company_id===values[1]&&trip.driver_id===values[2];return {rows:ok?[trip]:[],rowCount:ok?1:0}}

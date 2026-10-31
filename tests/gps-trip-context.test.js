@@ -62,3 +62,8 @@ test('nombres y estados se escapan sin insertar HTML',()=>{
  const html=card({associated_trip_id:7,trip_company_id:10,driver_name:'<img src=x>',client_name:'<script>x</script>',trip_status:'<svg>'});
  assert.doesNotMatch(html,/<img|<script|<svg/);assert.match(html,/&lt;img/);
 });
+
+test('posición de retorno identifica salida sin atribuirla al servicio ya entregado',()=>{
+ const html=card({outing_id:8,trip_id:null});assert.match(html,/Retorno de salida #8/);assert.doesNotMatch(html,/Esta posición no tiene un viaje|<a /);
+ assert.doesNotMatch(card({outing_id:'<img src=x>',trip_id:null}),/<img/);
+});

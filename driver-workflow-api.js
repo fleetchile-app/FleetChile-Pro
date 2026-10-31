@@ -12,17 +12,56 @@ function versions(trip,b){
 async function validateDeliveryContext(db,trip,b,loadId){
  if(b.resource_version!==undefined||b.version!==undefined)versions(trip,b);
  if(terminal(trip.status))throw D.fail('El viaje está cerrado',409);
+ if(trip.status!=='Descargando')throw D.fail('Registra la llegada e inicia la descarga antes de confirmar el POD',409,'DELIVERY_UNLOADING_REQUIRED');
  if(!trip.itinerary_version){if(trip.origin_location_id||trip.destination_location_id)throw D.fail('Confirma el itinerario del viaje antes de registrar entregas.',409,'ITINERARY_LOCATION_CONFLICT');return;}
  const revision=await currentPlan(db,trip),state=await loadState(db,trip);
  if(!revision)throw D.fail('No se encontró el itinerario',409);
  await require('./itinerary-coherence').verify(db,trip,revision.plan,state.loads,state.events);
  if(JSON.stringify(D.signature(state.loads))!==JSON.stringify(revision.plan.load_signature))throw D.fail('Las cargas cambiaron: operaciones debe revisar el itinerario',409,'ITINERARY_STALE');
  const next=D.progress(revision.plan,state.events).find(s=>!s.actual_departure),mapping=revision.plan.loads.find(m=>String(m.load_id)===String(loadId));
+ if(mapping&&!state.events.some(e=>e.kind==='pickup'&&String(e.load_id)===String(loadId)&&e.stop_key===mapping.pickup))throw D.fail('Confirma la recogida de esta carga antes de entregarla',409,'DELIVERY_PICKUP_REQUIRED');
  if(!mapping||mapping.delivery!==next?.key||!next.actual_arrival)throw D.fail('Registra la llegada a la parada de esta entrega antes de confirmarla',409,'DELIVERY_STOP_PENDING');
+}
+// One projection is shared by allowed-statuses, status writes and the mobile UI.
+async function driverSequence(db,trip,candidates){
+ const state=await loadState(db,trip),revision=trip.itinerary_version?await currentPlan(db,trip):null;
+ if(terminal(trip.status))return {allowed_statuses:[],next_stop:null,ready:false,blocker:null,pending_pickups:[],pending_deliveries:[],can_depart:false,state,plan:revision?.plan};
+ if(trip.itinerary_version&&!revision)throw D.fail('No se encontró el itinerario',409,'ITINERARY_STALE');
+ const plan=revision?.plan,stops=plan?D.progress(plan,state.events):[],next=stops.find(s=>!s.actual_departure)||null;
+ if(plan){
+  await require('./itinerary-coherence').verify(db,trip,plan,state.loads,state.events);
+  if(JSON.stringify(D.signature(state.loads))!==JSON.stringify(plan.load_signature))throw D.fail('Las cargas cambiaron: operaciones debe revisar el itinerario',409,'ITINERARY_STALE');
+ }
+ const pending=state.loads.filter(l=>l.status!=='Entregada'&&!l.delivered_at);
+ const pickups=next&&plan?plan.loads.filter(m=>m.pickup===next.key&&!state.events.some(e=>e.kind==='pickup'&&String(e.load_id)===String(m.load_id))):[];
+ const deliveries=next&&plan?plan.loads.filter(m=>m.delivery===next.key&&pending.some(l=>String(l.id)===String(m.load_id))):[];
+ if(plan&&!next&&!terminal(trip.status))candidates=[...new Set([...candidates,'Completado'])];
+ let allowed=candidates.filter(target=>{
+  if(target==='Completado')return !pending.length&&(!plan||!next);
+  if(!plan)return !(target==='En tránsito'&&trip.status==='Asignado'&&pending.some(l=>l.status!=='En carga'&&l.status!=='En tránsito'));
+  // Arrival and departure own movement; status buttons cannot bypass stops.
+  if(target==='Llegó a destino')return false;
+  if(target==='Detenido')return !next?.actual_arrival;
+  if(target==='En tránsito')return trip.status==='Detenido'&&!next?.actual_arrival;
+  if(target==='En carga')return Boolean(next?.actual_arrival&&pickups.length);
+  if(target==='Descargando')return Boolean(next?.actual_arrival&&deliveries.length);
+  return true;
+ });
+ let ready=true,blocker=null;
+ if(!terminal(trip.status))try{await require('./trip-predeparture').assertPredeparture(db,{companyId:trip.company_id,tripId:trip.id,truckId:trip.truck_id,driverId:trip.driver_id});}catch(e){if(e.status!==409)throw e;ready=false;blocker={code:e.code,error:e.message};}
+ if(!ready)allowed=allowed.filter(s=>s!=='En tránsito');
+ return {allowed_statuses:allowed,next_stop:next,ready,blocker,pending_pickups:pickups.map(m=>m.load_id),pending_deliveries:deliveries.map(m=>m.load_id),can_depart:Boolean(next?.actual_arrival&&!pickups.length&&!deliveries.length&&ready),state,plan};
+}
+async function movementStatus(db,req,trip,status){
+ if(status===trip.status)return;
+ const updated=(await db.query("update trips set status=$1,updated_at=now(),actual_departure=case when $1='En tránsito' then coalesce(actual_departure,now()) else actual_departure end where id=$2 and company_id=$3 returning *",[status,trip.id,trip.company_id])).rows[0];
+ await db.query('insert into trip_status_history(trip_id,from_status,to_status,notes,created_by) values($1,$2,$3,$4,$5)',[trip.id,trip.status,status,'Secuencia de paradas del conductor',req.user.id]);
+ await writeAudit(db,req,{companyId:trip.company_id,action:'driver_status_change',entity:'trip',entityId:trip.id,beforeData:trip,afterData:updated});
+ await require('./trip-resources').syncResourceAlert(db,{...trip,...updated});
 }
 function canonical(value){if(Array.isArray(value))return value.map(canonical);if(value&&typeof value==='object')return Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])]));return value;}
 const digest=value=>createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
-function registerDriverWorkflow(app,pool,{driverAccess,enforceDriverPersonnel}){
+function registerDriverWorkflow(app,pool,{driverAccess,enforceDriverPersonnel,assertTripResourcesReady=require('./trip-eligibility').assertTripResourcesReady}){
  const BASE='/api/driver/trips/:id/workflow';
  const tripQuery='select * from trips where id=$1 and company_id=$2 and driver_id=$3';
  const values=req=>[req.params.id,req.user.company_id,req.user.driver_id];
@@ -35,7 +74,8 @@ function registerDriverWorkflow(app,pool,{driverAccess,enforceDriverPersonnel}){
    const progress=plan?D.progress(plan,state.events):[];
    const loads=(await pool.query('select l.id,l.cargo,l.weight_kg,l.status,l.delivered_at,c.name client_name from trip_loads l join clients c on c.id=l.client_id and c.company_id=$2 where l.trip_id=$1 order by l.id',[trip.id,trip.company_id])).rows;
    const accepted=(await pool.query("select confirmed_at from driver_mobile_actions where company_id=$1 and trip_id=$2 and resource_version=$3 and driver_id=$4 and kind='accept' order by id desc limit 1",[trip.company_id,trip.id,trip.resource_version,trip.driver_id])).rows[0];
-   res.json({trip_id:trip.id,status:trip.status,resource_version:trip.resource_version,version:trip.itinerary_version,accepted_at:accepted?.confirmed_at||null,stops:progress,next_stop:progress.find(s=>!s.actual_departure)||null,loads:D.outcomes(loads,state.events).map(l=>({...l,...(plan?.loads.find(m=>String(m.load_id)===String(l.id))||{}),picked_up:state.events.some(e=>e.kind==='pickup'&&String(e.load_id)===String(l.id))}))});
+   const sequence=await driverSequence(pool,trip,[]);
+   res.json({ready:sequence.ready,blocker:sequence.blocker,can_depart:sequence.can_depart,pending_pickups:sequence.pending_pickups,pending_deliveries:sequence.pending_deliveries,trip_id:trip.id,status:trip.status,resource_version:trip.resource_version,version:trip.itinerary_version,accepted_at:accepted?.confirmed_at||null,stops:progress,next_stop:progress.find(s=>!s.actual_departure)||null,loads:D.outcomes(loads,state.events).map(l=>({...l,...(plan?.loads.find(m=>String(m.load_id)===String(l.id))||{}),picked_up:state.events.some(e=>e.kind==='pickup'&&String(e.load_id)===String(l.id))}))});
   }catch(e){error(res,e);}
  });
  for(const action of ['events','accept','checklist'])app.post(BASE+'/'+action,async(req,res)=>{
@@ -47,8 +87,15 @@ function registerDriverWorkflow(app,pool,{driverAccess,enforceDriverPersonnel}){
    // Validate live assignment even on retries; receipts never authorize a former driver.
    if(action==='events'){
     versions(trip,b);
+    const duplicate=(await db.query('select * from trip_itinerary_events where company_id=$1 and trip_id=$2 and event_key=$3',[trip.company_id,trip.id,b.event_key])).rows[0];
+    if(!duplicate&&b.kind==='depart')await require('./trip-predeparture').assertPredeparture(db,{companyId:trip.company_id,tripId:trip.id,truckId:trip.truck_id,driverId:trip.driver_id});
     const result=await recordItineraryEvent(db,req,trip,b,{pickups:true});
-    if(result.created&&b.kind==='depart')await require('./trip-eligibility').assertTripResourcesReady(db,{companyId:trip.company_id,truckId:trip.truck_id,trailerId:trip.trailer_id,driverId:trip.driver_id,tripId:trip.id,status:'En tránsito',predeparture:true,plannedDeparture:trip.planned_departure,plannedArrival:trip.planned_arrival,compositionSnapshot:trip.composition_snapshot,itineraryVersion:trip.itinerary_version});
+    if(result.created&&b.kind==='depart')await assertTripResourcesReady(db,{companyId:trip.company_id,truckId:trip.truck_id,trailerId:trip.trailer_id,driverId:trip.driver_id,tripId:trip.id,status:'En tránsito',predeparture:true,plannedDeparture:trip.planned_departure,plannedArrival:trip.planned_arrival,compositionSnapshot:trip.composition_snapshot,itineraryVersion:trip.itinerary_version});
+    if(result.created){
+     const revision=await currentPlan(db,trip),stop=revision?.plan.stops.find(s=>s.key===b.stop_key);
+     if(b.kind==='arrive')await movementStatus(db,req,trip,['delivery','mixed'].includes(stop?.purpose)?'Llegó a destino':stop?.purpose==='pickup'?'En carga':trip.status);
+     if(b.kind==='depart'&&revision?.plan.stops.at(-1)?.key!==b.stop_key)await movementStatus(db,req,trip,'En tránsito');
+    }
     await db.query('COMMIT');return res.status(result.created?201:200).json(result.row);
    }
    const key=D.key(b.client_key),hash=digest(b);
@@ -79,4 +126,4 @@ function registerDriverWorkflow(app,pool,{driverAccess,enforceDriverPersonnel}){
   }catch(e){if(db)await db.query('ROLLBACK');error(res,e);}finally{db?.release();}
  });
 }
-module.exports={registerDriverWorkflow,validateDeliveryContext,versions,CHECKS};
+module.exports={driverSequence,registerDriverWorkflow,validateDeliveryContext,versions,CHECKS};

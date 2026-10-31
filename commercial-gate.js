@@ -20,13 +20,30 @@ function commercialGate(pool){return async(req,res,next)=>{
    return next();
   }
   if(feature==='gps'){
+   const returnTrip=path.match(/\/driver\/trips\/(\d+)\/outing\/positions$/)?.[1];
+   if(returnTrip){
+    const row=(await pool.query(`select o.commercial_modules from operational_outings o join operational_outing_services s on s.outing_id=o.id and s.company_id=o.company_id
+     where o.company_id=$1 and s.trip_id=$2 and o.status='returning' and o.closed_at is null`,[cid,returnTrip])).rows[0];
+    if(row&&(row.commercial_modules==null||row.commercial_modules.includes('gps')))return next();
+    return res.status(403).json({code:'MODULE_NOT_CONTRACTED',error:'El seguimiento GPS no estaba contratado para esta salida de retorno.'});
+   }
    const truck=path.match(/\/trucks\/(\d+)\//)?.[1]||req.body?.truck_id||req.query?.truck_id;
    const unit=Number.isSafeInteger(Number(truck))&&Number(truck)>0?Number(truck):null;
+   if(unit){
+    const returning=(await pool.query(`select id from operational_outings where company_id=$1 and truck_id=$2
+     and status='returning' and closed_at is null and (commercial_modules is null or commercial_modules ? 'gps')`,[cid,unit])).rows[0];
+    if(returning)return next();
+   }
    const ongoing=(await pool.query('select commercial_running_gps($1,$2) allowed',[cid,unit])).rows[0]?.allowed;
    if(ongoing)return next();
   }
   const match=path.match(/\/(?:driver\/trips|operations\/trips|trips)\/(\d+)(?:\/|$)/);
   if(!read&&match){
+   if(/\/outing\/action$/.test(path)&&['wait','return','arrive_base','release'].includes(req.body?.action)){
+    const row=(await pool.query(`select o.id from operational_outings o join operational_outing_services s on s.outing_id=o.id and s.company_id=o.company_id
+     where o.company_id=$1 and s.trip_id=$2 and o.closed_at is null`,[cid,match[1]])).rows[0];
+    if(row)return next();
+   }
    const trip=(await pool.query('select status,actual_departure,commercial_modules from trips where id=$1 and company_id=$2',[match[1],cid])).rows[0];
    const ongoing=trip&&!['Completado','Cancelado','Planificado','Asignado'].includes(trip.status);
    const prior=trip?.commercial_modules==null||trip.commercial_modules.includes(feature);

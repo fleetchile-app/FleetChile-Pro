@@ -2,7 +2,7 @@
  'use strict';
  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  let vault=null,identity='',generation=0,syncing=null,storageError='';
- const contexts=new Map();
+ const contexts=new Map(),refreshers=new Map();
  const actionLabels={accept:'Aceptación',events:'Evento del recorrido',checklist:'Checklist',delivery:'Entrega',fuel:'Combustible'};
  const purposeLabels={pickup:'Recogida',delivery:'Entrega',mixed:'Recogida y entrega',rest:'Descanso',toll:'Peaje',weigh:'Pesaje',other:'Otra parada'};
  const checks=window.FleetChecklist?.controls||[['brakes','Frenos y dirección'],['tires','Neumáticos'],['lights','Luces y señalización'],['visibility','Espejos, vidrios y visibilidad'],['safety','Elementos de seguridad'],['documents','Documentación del vehículo']];
@@ -15,7 +15,7 @@
  function bind(){
   const next=DriverVault.owner(Auth.user);
   if(next===identity&&vault)return;
-  generation++;identity=next;contexts.clear();storageError='';
+  generation++;identity=next;contexts.clear();refreshers.clear();storageError='';
   try{vault=DriverVault.create(Auth.user);}catch(e){vault=null;storageError=e.message;}
  }
  function active(stamp){try{return stamp===generation&&Auth.user&&DriverVault.owner(Auth.user)===identity;}catch{return false;}}
@@ -99,8 +99,9 @@
     const ctx=await request(base(trip.id));if(!active(stamp)||!host.isConnected)return;
     contexts.set(String(trip.id),ctx);
     if(window.DriverFuel&&!detail.querySelector('[data-driver-fuel]'))await window.DriverFuel.mount(trip,detail,ctx);
+    if(!active(stamp)||!host.isConnected)return;
     const stop=ctx.next_stop,at=Boolean(stop?.actual_arrival),closed=['Completado','Cancelado'].includes(ctx.status);
-    host.innerHTML=`<h2>Mi recorrido</h2><p>${ctx.accepted_at?'Asignación aceptada y confirmada':'La aceptación no inicia el viaje ni reemplaza el checklist.'}</p>${!ctx.accepted_at&&!closed?'<button class="driver-button" data-accept>Aceptar viaje</button>':''}${stop?`<h3>Próxima parada: ${esc(stop.location?.name||stop.key)}</h3><p>${esc(stop.location?.address||'')} · ${esc(purposeLabels[stop.purpose]||stop.purpose)}</p><p>Previsto: ${esc(new Date(stop.planned_arrival).toLocaleString('es-CL'))}</p><button class="driver-button" data-action="${at?'depart':'arrive'}" ${closed?'disabled':''}>${at?'Registrar salida':'Registrar llegada'}</button><div>${ctx.loads.filter(l=>l.pickup===stop.key||l.delivery===stop.key).map(l=>`<div class="driver-mobile-load"><b>${esc(l.cargo)} · ${esc(l.client_name)}</b><span>${l.pickup===stop.key?'Recogida':'Entrega'} · ${esc(l.remaining_kg??l.weight_kg??'Peso pendiente')} kg pendientes</span>${l.pickup===stop.key&&!l.picked_up&&at?`<button class="driver-button" data-pickup="${esc(l.id)}">Confirmar recogida</button>`:''}${l.delivery===stop.key&&l.status!=='Entregada'?`<p>La entrega con firma se registra en Entregas, más abajo.</p>${at?`<button class="driver-link" data-exception="${esc(l.id)}">Entrega parcial, fallida o solicitar reprogramación</button>`:''}`:''}</div>`).join('')}</div>`:ctx.version?'<p>Paradas finalizadas. Revisa las cargas antes de completar el viaje.</p>':'<p>Este viaje no tiene itinerario multientrega. Conserva el circuito de entregas habitual.</p>'}${!closed&&ctx.version?'<button class="driver-link" data-delay>Registrar incidente o demora</button>':''}<div data-mobile-message role="status" aria-live="polite"></div><div data-event-form></div>`;
+    host.innerHTML=`<h2>Secuencia del servicio</h2>${ctx.blocker?`<p role="status">${esc(ctx.blocker.error)}</p>`:''}<p>${ctx.accepted_at?'Asignación aceptada y confirmada':'La aceptación no inicia el viaje ni reemplaza el checklist.'}</p>${!ctx.accepted_at&&!closed?'<button class="driver-button" data-accept>Aceptar viaje</button>':''}${stop?`<h3>Próxima parada: ${esc(stop.location?.name||stop.key)}</h3><p>${esc(stop.location?.address||'')} · ${esc(purposeLabels[stop.purpose]||stop.purpose)}</p><p>Previsto: ${esc(new Date(stop.planned_arrival).toLocaleString('es-CL'))}</p><button class="driver-button" data-action="${at?'depart':'arrive'}" ${closed||(at&&!ctx.can_depart)?'disabled':''}>${at?'Salir de la parada':'Registrar llegada'}</button><div>${ctx.loads.filter(l=>l.pickup===stop.key||l.delivery===stop.key).map(l=>`<div class="driver-mobile-load"><b>${esc(l.cargo)} · ${esc(l.client_name)}</b><span>${l.pickup===stop.key?'Recogida':'Entrega'} · ${esc(l.remaining_kg??l.weight_kg??'Peso pendiente')} kg pendientes</span>${l.pickup===stop.key&&!l.picked_up&&at&&!closed?`<button class="driver-button" data-pickup="${esc(l.id)}">Confirmar recogida</button>`:''}${l.delivery===stop.key&&l.status!=='Entregada'?`<p>La entrega con firma se registra en Entregas, más abajo.</p>${at&&!closed?`<button class="driver-link" data-exception="${esc(l.id)}">Entrega parcial, fallida o solicitar reprogramación</button>`:''}`:''}</div>`).join('')}</div>`:ctx.version?'<p>Paradas finalizadas. Completa el servicio cuando todas las cargas estén entregadas.</p>':'<p>Este viaje no tiene itinerario multientrega. Conserva el circuito de entregas habitual.</p>'}${!closed&&ctx.version?'<button class="driver-link" data-delay>Registrar incidente o demora</button>':''}<div data-mobile-message role="status" aria-live="polite"></div><div data-event-form></div>`;
     const refreshButton=document.createElement('button');refreshButton.className='driver-link';refreshButton.textContent='Actualizar recorrido';refreshButton.onclick=refresh;host.prepend(refreshButton);
     host.querySelector('[data-accept]')?.addEventListener('click',()=>send('accept',{client_key:crypto.randomUUID()}));
     host.querySelector('[data-action]')?.addEventListener('click',e=>send('events',{kind:e.target.dataset.action,stop_key:stop.key,event_key:crypto.randomUUID()}));
@@ -120,6 +121,7 @@
    const box=host.querySelector('[data-event-form]');box.innerHTML=`<form class="driver-mobile-form"><h3>${loadId?'Excepción de entrega':'Incidente / demora'}</h3>${loadId?'<label>Resultado<select name="kind"><option value="failed">Fallida</option><option value="partial">Parcial</option><option value="reschedule">Solicitar reprogramación</option></select></label><label>Peso entregado en esta ocasión (solo parcial)<input name="delivered_kg" type="number" min="0.001" step="0.001"></label>':'<input name="kind" type="hidden" value="delay"><label>Demora estimada en minutos<input name="minutes" type="number" min="1" max="10080" required></label>'}<label>Motivo<textarea name="reason" maxlength="2000" required></textarea></label><p>Una excepción no completa la carga. Operaciones debe aprobar cualquier cambio del itinerario.</p><button class="driver-button">Guardar evento</button></form>`;
    box.querySelector('form').onsubmit=e=>{e.preventDefault();const b=Object.fromEntries(new FormData(e.target));if(b.kind!=='partial')delete b.delivered_kg;send('events',{...b,...(loadId?{load_id:loadId}:{}),...(stop?{stop_key:stop.key}:{}),event_key:crypto.randomUUID()});};
   }
+  refreshers.set(String(trip.id),async()=>{if(active(stamp)&&host.isConnected)await refresh();});
   await refresh();
  }
  async function checklist(id,box){
@@ -149,7 +151,7 @@
      const items=checks.map(([key])=>({id:key,result:b[key]})),result=items.some(i=>i.result==='fail')?'Rechazado':'Aprobado';rules.validate({status:result,items,observations:b.observations});
      const key=crypto.randomUUID();await queue(id,'checklist',{client_key:key,reported_at:new Date().toISOString(),items,observations:b.observations,...(replacement?{supersedes_id:current.id,reason:b.reason}:{})},key);
      await vault.remove(draftId);if(!active(stamp)||!box.isConnected)return;
-     if(navigator.onLine!==false&&!await vault.get(key)){await checklist(id,box);return;}
+     if(navigator.onLine!==false&&!await vault.get(key)){await checklist(id,box);await refreshers.get(String(id))?.();return;}
      status.textContent='Pendiente de confirmación. Consulta Pendientes del teléfono; no se presenta como aprobado.';await renderOutbox();form.querySelectorAll('select,textarea,input').forEach(el=>el.disabled=true);
     }catch(error){status.textContent=error.message;form.querySelector('button').disabled=false;}
    };
@@ -164,14 +166,15 @@
   }finally{image.close();}
  }
  window.DriverMobile={bind,mountOutbox,workflow,checklist,photoData,
-  pause(){generation++;identity='';vault=null;contexts.clear();},
-  async logout(){const store=vault;if(store){const rows=await store.list();if(rows.length&&!confirm('Hay '+rows.length+' registros locales. Cerrar sesión los eliminará de este teléfono. Cancela y sincroniza si deseas conservarlos.'))return false;generation++;vault=null;contexts.clear();await store.purge();}generation++;identity='';vault=null;contexts.clear();return true;},
+  pause(){generation++;identity='';vault=null;contexts.clear();refreshers.clear();},
+  async logout(){const store=vault;if(store){const rows=await store.list();if(rows.length&&!confirm('Hay '+rows.length+' registros locales. Cerrar sesión los eliminará de este teléfono. Cancela y sincroniza si deseas conservarlos.'))return false;generation++;vault=null;contexts.clear();refreshers.clear();await store.purge();}generation++;identity='';vault=null;contexts.clear();refreshers.clear();return true;},
   context:id=>contexts.get(String(id)),
   async ensureContext(id){const stamp=generation,ctx=contexts.get(String(id))||await request(base(id));if(!active(stamp))throw Error('La sesión cambió');contexts.set(String(id),ctx);return ctx;},
   pending:async id=>requireVault().get(id),
   draft:async(id,value)=>{const store=requireVault();return value?store.put(id,value):store.get(id);},
   async delivery(tripId,payload){await queue(tripId,'delivery',payload,payload.client_submission_id);return {pending:Boolean(await vault.get(payload.client_submission_id))};},
   async fuel(tripId,payload){await queue(tripId,'fuel',payload,payload.client_key);return {pending:Boolean(await vault.get(payload.client_key))};},
+  refresh:async id=>refreshers.get(String(id))?.(),
   reconcile,sync
  };
  window.addEventListener('online',()=>{if(Auth.user&&vault)sync();else if(Auth.token)authBoot();});

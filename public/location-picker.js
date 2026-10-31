@@ -5,6 +5,7 @@
  const request=(path,body)=>window.Auth.request('/api/location-picker/'+path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});
  const options=(rows,selected='')=>'<option value="">Seleccionar</option>'+rows.map(x=>`<option value="${esc(x.id)}" ${String(x.id)===String(selected)?'selected':''}>${esc(x.name)}</option>`).join('');
  let active=null;
+ const controllers=new WeakMap();
  async function pick({title='Definir ubicación',onSelect,returnFocus}={}){
   active?.close();const token=identity(),previousFocus=returnFocus||document.activeElement;
   const host=document.createElement('div');host.className='location-dialog';host.setAttribute('role','dialog');host.setAttribute('aria-modal','true');host.setAttribute('aria-label',title);
@@ -45,15 +46,16 @@
  }
  function hidden(form,name,value=''){let input=form.querySelector(`[name="${name}"]`);if(!input){input=document.createElement('input');input.type='hidden';input.name=name;form.appendChild(input);}input.value=value;return input;}
  function decorate(form){
-  const a=form.querySelector('input[name=origin]'),b=form.querySelector('input[name=destination]');if(!a||!b||a.dataset.locationPicker==='yes')return;
+  const a=form.querySelector('input[name=origin]'),b=form.querySelector('input[name=destination]');if(!a||!b)return;if(a.dataset.locationPicker==='yes')return controllers.get(a);
   a.dataset.locationPicker='yes';const token=identity(),state={origin:null,destination:null,route:null};let routeMap,sequence=0;
   const distance=form.querySelector('[name=distance_km]'),isRoute=Boolean(distance),box=document.createElement('div');box.className='location-route-box';box.innerHTML=`<p data-info>Confirma ambos puntos para calcular distancia por carretera.</p>${isRoute?'<button type="button" class="secondary" data-calculate>Calcular recorrido vial</button><label><input type="checkbox" data-no-route> Guardar planificación sin cálculo vial (distancia pendiente)</label>':''}<div data-preview></div>`;const holder=form.querySelector('.formgrid')||form;holder.appendChild(box);
   const info=box.querySelector('[data-info]'),valid=()=>identity()===token&&form.isConnected&&a.isConnected&&b.isConnected;
   if(distance){distance.readOnly=true;distance.required=false;distance.placeholder='Pendiente de cálculo';const field=distance.closest('.field');if(field?.querySelector('label'))field.querySelector('label').textContent='Distancia vial calculada (km)';if(field?.querySelector('small'))field.querySelector('small').textContent='Se obtiene del recorrido por carretera. No se estima a partir de nombres de ciudades.';}
   const invalidate=()=>{sequence++;state.route=null;routeMap?.remove();routeMap=null;box.querySelector('[data-preview]').innerHTML='';if(distance){distance.value='';distance.readOnly=true;distance.required=false;}if(isRoute){hidden(form,'road_route_id','');hidden(form,'route_access_ack','');}info.textContent='Los puntos cambiaron. Calcula el recorrido para obtener kilómetros y duración.';};
+  const selectPoint=(key,row)=>{if(!valid())return;const input=key==='origin'?a:b;state[key]=row;input.value=row.name;input.title=[row.address,row.commune,row.access_notes].filter(Boolean).join(' · ');hidden(form,key+'_location_id',row.id);invalidate();};
   for(const [key,input] of [['origin',a],['destination',b]]){
    input.readOnly=true;input.placeholder='Seleccionar ubicación';const actions=document.createElement('div');actions.className='location-field-actions';const button=document.createElement('button');button.type='button';button.className='secondary';button.textContent=key==='origin'?'Definir origen en mapa':'Definir destino en mapa';actions.appendChild(button);input.after(actions);
-   button.onclick=()=>pick({title:key==='origin'?'Definir origen':'Definir destino',returnFocus:button,onSelect:row=>{if(!valid())return;state[key]=row;input.value=row.name;input.title=[row.address,row.commune,row.access_notes].filter(Boolean).join(' · ');hidden(form,key+'_location_id',row.id);invalidate();}});
+   button.onclick=()=>pick({title:key==='origin'?'Definir origen':'Definir destino',returnFocus:button,onSelect:row=>selectPoint(key,row)});
   }
   const calculate=async()=>{
    if(!state.origin||!state.destination)throw Error('Selecciona origen y destino con sus accesos exactos.');const version=++sequence;
@@ -73,9 +75,23 @@
    if(isRoute&&state.route&&(state.route.snapped_points||[]).some(p=>Number(p.distance)>100)&&form.querySelector('[name=route_access_ack]')?.value!=='true'){e.preventDefault();e.stopImmediatePropagation();info.textContent='Confirma la revisión de los accesos separados de la vía calculada.';return;}
    if(isRoute&&!state.route&&!box.querySelector('[data-no-route]').checked){e.preventDefault();e.stopImmediatePropagation();info.textContent='Calcula el recorrido o elige explícitamente guardar con distancia pendiente.';}
   },true);
+  const controller={async preload({origin_location_id,company_id},{isCurrent=()=>true}={}){
+   const positive=v=>/^[1-9]\d*$/.test(String(v))&&Number.isSafeInteger(Number(v));
+   if(!positive(origin_location_id)||!positive(company_id))throw Error('Origen o empresa no válido');
+   if(!valid()||!isCurrent())throw Error('El formulario o la empresa cambió.');
+   const version=++sequence;
+   const row=await request('locations/'+encodeURIComponent(origin_location_id));
+   if(!valid()||!isCurrent()||version!==sequence)throw Error('El formulario, los puntos o la empresa cambiaron.');
+   const coordinate=(v,max)=>['string','number'].includes(typeof v)&&String(v).trim()!==''&&Number.isFinite(Number(v))&&Math.abs(Number(v))<=max;
+   if(String(row?.id)!==String(origin_location_id)||String(row.company_id)!==String(company_id)||!row.name||!coordinate(row.lat,90)||!coordinate(row.lng,180))throw Error('El origen guardado no está confirmado para esta empresa.');
+   selectPoint('origin',row);info.textContent='Origen confirmado desde el servicio anterior. Selecciona el destino propio de este nuevo servicio.';
+   return row;
+  }};
+  controllers.set(a,controller);return controller;
  }
+ const preload=(form,points,options)=>{const controller=decorate(form);if(!controller)throw Error('El formulario no admite precarga de ubicaciones.');return controller.preload(points,options);};
  const scan=()=>{if(active&&identity()!==active.token&&active.token)active.close();document.querySelectorAll('form').forEach(decorate);};
- window.LocationPicker={pick,decorate};
+ window.LocationPicker={pick,decorate,preload};
  if(window.MutationObserver)new MutationObserver(scan).observe(document.body,{childList:true,subtree:true});
  scan();
 })();

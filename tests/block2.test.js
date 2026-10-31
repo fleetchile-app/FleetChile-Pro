@@ -434,7 +434,7 @@ test('trip_loads: creación válida autoriza viaje y cliente antes de insertar y
   const created={id:23,trip_id:7,client_id:8,guide:'G-100',cargo:'Fruta',weight_kg:1200,volume_m3:8,value_clp:450000,origin:'Talca',destination:'Santiago',status:'Planificada'};
   const pool=transactionalPool(async(sql)=>{
     if(['BEGIN','COMMIT'].includes(sql))return {rowCount:0,rows:[]};
-    if(sql.includes('select id,company_id from trips t'))return {rowCount:1,rows:[trip]};
+    if(sql.includes('select id,company_id,origin_location_id,destination_location_id from trips t'))return {rowCount:1,rows:[trip]};
     if(sql.startsWith('select id from clients'))return {rowCount:1,rows:[{id:8}]};
     if(sql.startsWith('insert into trip_loads'))return {rowCount:1,rows:[created]};
     if(sql.startsWith('insert into audit_logs'))return {rowCount:1,rows:[]};
@@ -445,7 +445,7 @@ test('trip_loads: creación válida autoriza viaje y cliente antes de insertar y
   const {res}=await invoke(app.route('post','/api/operations/trips/:id/loads'),{body});
   assert.equal(res.statusCode,201);
   assert.deepEqual(res.payload,created);
-  const tripLookup=pool.calls.find(call=>call.sql.includes('select id,company_id from trips t'));
+  const tripLookup=pool.calls.find(call=>call.sql.includes('select id,company_id,origin_location_id,destination_location_id from trips t'));
   assert.match(tripLookup.sql,/t\.id=\$1 and t\.company_id=\$2/);
   assert.deepEqual(tripLookup.values,['7',10]);
   const clientLookup=pool.calls.find(call=>call.sql.startsWith('select id from clients'));
@@ -455,7 +455,7 @@ test('trip_loads: creación válida autoriza viaje y cliente antes de insertar y
   assert.deepEqual(insert.values,['7',8,'G-100','Fruta',1200,8,450000,'Talca','Santiago','Planificada']);
   const audit=auditCall(pool.calls);
   assert.deepEqual(audit.values.slice(0,7),[10,5,'create','trip_load','23',null,created]);
-  assert.ok(indexOf(pool.calls,'select id,company_id from trips t')<indexOf(pool.calls,'select id from clients'));
+  assert.ok(indexOf(pool.calls,'select id,company_id,origin_location_id,destination_location_id from trips t')<indexOf(pool.calls,'select id from clients'));
   assert.ok(indexOf(pool.calls,'select id from clients')<indexOf(pool.calls,'insert into trip_loads'));
   assert.ok(indexOf(pool.calls,'insert into trip_loads')<indexOf(pool.calls,'insert into audit_logs'));
   assert.ok(indexOf(pool.calls,'insert into audit_logs')<indexOf(pool.calls,'COMMIT'));
@@ -467,7 +467,7 @@ for(const scenario of ['cross-company','inexistente']){
   test(`trip_loads: cliente ${scenario} devuelve 403 sin carga ni auditoría`,async()=>{
     const pool=transactionalPool(async(sql)=>{
       if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
-      if(sql.includes('select id,company_id from trips t'))return {rowCount:1,rows:[{id:7,company_id:10}]};
+      if(sql.includes('select id,company_id,origin_location_id,destination_location_id from trips t'))return {rowCount:1,rows:[{id:7,company_id:10}]};
       if(sql.startsWith('select id from clients'))return {rowCount:0,rows:[]};
       throw new Error(`Consulta inesperada: ${sql}`);
     });
@@ -486,7 +486,7 @@ for(const scenario of ['cross-company','inexistente']){
   test(`trip_loads: viaje ${scenario} devuelve 404 sin consultas hijas`,async()=>{
     const pool=transactionalPool(async(sql)=>{
       if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
-      if(sql.includes('select id,company_id from trips t'))return {rowCount:0,rows:[]};
+      if(sql.includes('select id,company_id,origin_location_id,destination_location_id from trips t'))return {rowCount:0,rows:[]};
       throw new Error(`Consulta hija inesperada: ${sql}`);
     });
     const app=fakeApp();await registerOperationsRoutes(app,pool);
@@ -506,7 +506,7 @@ test('trip_loads: fallo del INSERT ejecuta ROLLBACK sin auditoría ni COMMIT',as
   const pool=transactionalPool(async(sql)=>{
     if(sql.startsWith('select id from clients'))return {rowCount:1,rows:[{id:8}]};
     if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
-    if(sql.includes('select id,company_id from trips t'))return {rowCount:1,rows:[{id:7,company_id:10}]};
+    if(sql.includes('select id,company_id,origin_location_id,destination_location_id from trips t'))return {rowCount:1,rows:[{id:7,company_id:10}]};
     if(sql.startsWith('insert into trip_loads'))throw new Error('insert failed');
     throw new Error(`Consulta inesperada: ${sql}`);
   });
@@ -524,7 +524,7 @@ test('trip_loads: fallo de auditoría revierte la carga sin COMMIT',async()=>{
   const pool=transactionalPool(async(sql)=>{
     if(sql.startsWith('select id from clients'))return {rowCount:1,rows:[{id:8}]};
     if(sql==='BEGIN'||sql==='ROLLBACK')return {rowCount:0,rows:[]};
-    if(sql.includes('select id,company_id from trips t'))return {rowCount:1,rows:[{id:7,company_id:10}]};
+    if(sql.includes('select id,company_id,origin_location_id,destination_location_id from trips t'))return {rowCount:1,rows:[{id:7,company_id:10}]};
     if(sql.startsWith('insert into trip_loads'))return {rowCount:1,rows:[created]};
     if(sql.startsWith('insert into audit_logs'))throw new Error('audit failed');
     throw new Error(`Consulta inesperada: ${sql}`);
@@ -542,7 +542,7 @@ test('trip_loads: admin conserva bypass del viaje y valida cliente contra la emp
   const created={id:23,trip_id:7,client_id:8,cargo:'Carga'};
   const pool=transactionalPool(async(sql)=>{
     if(['BEGIN','COMMIT'].includes(sql))return {rowCount:0,rows:[]};
-    if(sql.includes('select id,company_id from trips t'))return {rowCount:1,rows:[{id:7,company_id:20}]};
+    if(sql.includes('select id,company_id,origin_location_id,destination_location_id from trips t'))return {rowCount:1,rows:[{id:7,company_id:20}]};
     if(sql.startsWith('select id from clients'))return {rowCount:1,rows:[{id:8}]};
     if(sql.startsWith('insert into trip_loads'))return {rowCount:1,rows:[created]};
     if(sql.startsWith('insert into audit_logs'))return {rowCount:1,rows:[]};
@@ -552,7 +552,7 @@ test('trip_loads: admin conserva bypass del viaje y valida cliente contra la emp
   const user={id:1,role_code:'admin',company_id:null,permissions:[]};
   const {res}=await invoke(app.route('post','/api/operations/trips/:id/loads'),{user,body:{cargo:'Carga',client_id:8}});
   assert.equal(res.statusCode,201);
-  const tripLookup=pool.calls.find(call=>call.sql.includes('select id,company_id from trips t'));
+  const tripLookup=pool.calls.find(call=>call.sql.includes('select id,company_id,origin_location_id,destination_location_id from trips t'));
   assert.match(tripLookup.sql,/t\.id=\$1 and true/);
   assert.deepEqual(tripLookup.values,['7']);
   const clientLookup=pool.calls.find(call=>call.sql.startsWith('select id from clients'));

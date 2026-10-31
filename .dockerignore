@@ -15,6 +15,7 @@ selector-*
 coverage
 test-results
 playwright-report
+mobile
 *.pem
 *.key
 *.p12

@@ -32,6 +32,7 @@
  }
  function leaveForm(){return !root.querySelector('.driver-delivery-form')||confirm('Hay una entrega abierta. Los datos sin guardar se perderán. ¿Continuar?')}
  function authenticatedScreen(content){
+  window.DriverOuting?.pause();
   root.innerHTML=`<section class="driver-shell">${accountHeader()}${Auth.user?.role_code==='driver'&&Auth.user.driver_id&&!Auth.user.must_change_password?gpsPanel():''}${content}</section>`;
   renderGps();
   window.CompanyBranding?.load();
@@ -99,6 +100,7 @@
   stop.hidden=!gpsConsent;stop.onclick=()=>{stopGps('Ubicación detenida por el conductor.');start.focus()};
  }
  function stopGps(message='Ubicación detenida.',preserveConsent=false){
+  window.DriverOuting?.pause();
   gpsGeneration++;
   if(gpsWatch!==null&&navigator.geolocation)navigator.geolocation.clearWatch(gpsWatch);
   gpsWatch=null;gpsTripId=null;gpsLastSent=0;
@@ -330,7 +332,7 @@
     completed=true;
     clearDeliverySubmission(key);
     card.innerHTML=pending?'<p role="status">Entrega guardada en este teléfono. Falta confirmación del servidor: revisa Pendientes del teléfono.</p>':'<p class="driver-success">Entrega registrada correctamente.</p>';
-    if(!pending&&view===viewVersion)await loadDeliveries(tripId);
+    if(!pending&&version===sessionVersion&&view===viewVersion){await loadDeliveries(tripId);await window.DriverMobile?.refresh?.(tripId);}
    }catch(e){
     error.textContent=e.message||'No se pudo registrar la entrega.';
     error.hidden=false;button.disabled=false;button.textContent='Reintentar entrega';
@@ -338,11 +340,40 @@
   };
   return card;
  }
- async function loadDeliveries(tripId){const detail=root.querySelector('.driver-detail');if(!detail)return;let box=detail.querySelector('.driver-deliveries');if(!box){box=document.createElement('div');box.className='driver-card driver-deliveries';detail.append(box)}box.innerHTML='<h3>Entregas</h3><p>Cargando cargas…</p>';const version=sessionVersion,view=viewVersion;try{const context=window.DriverMobile?await window.DriverMobile.ensureContext(tripId):null;const data=await api(`/api/driver/trips/${encodeURIComponent(tripId)}/deliveries`);if(version!==sessionVersion||view!==viewVersion)return;box.innerHTML=`<h3>Entregas</h3>${context?.version?'<p>Solo puedes entregar las cargas de la parada actual después de registrar tu llegada.</p>':''}${data.deliveries?.length?data.deliveries.map(load=>`<div class="driver-delivery-row"><div><b>${esc(load.cargo)}</b><span>${esc(load.status)}</span></div>${load.status==='Entregada'?'<span class="driver-success">Completada</span>':`<button class="driver-button delivery-start" ${context?.version&&(!context.next_stop?.actual_arrival||!context.loads.some(l=>String(l.id)===String(load.id)&&l.delivery===context.next_stop.key))?'disabled':''}>Entregar</button>`}</div>`).join(''):'<p>No hay cargas registradas.</p>'}`;if(['Completado','Cancelado'].includes(context?.status)){box.insertAdjacentHTML('afterbegin','<p>El viaje está cerrado. Los pendientes del teléfono se conservan para comprobar su recepción con operaciones.</p>');box.querySelectorAll('.delivery-start').forEach(b=>b.disabled=true);return;}const rows=[...box.querySelectorAll('.driver-delivery-row')];data.deliveries?.forEach((load,index)=>rows[index]?.querySelector('.delivery-start')?.addEventListener('click',()=>{const old=box.querySelector('.driver-delivery-form');old?.remove();box.append(deliveryForm(tripId,load))}))}catch(e){if(version!==sessionVersion||view!==viewVersion)return;box.innerHTML=`<h3>Entregas</h3><p class="driver-error">${esc(e.message)}</p>`}}
+ function deliveryStage(context,loadId){
+  if(!context)return 'Actualiza el recorrido';
+  if(['Completado','Cancelado'].includes(context.status))return 'Servicio cerrado';
+  if(context.version){
+   const stop=context.next_stop,load=context.loads.find(l=>String(l.id)===String(loadId));
+   if(!stop||load?.delivery!==stop.key)return 'Pendiente parada de entrega';
+   if(!stop.actual_arrival)return 'Pendiente llegada';
+   if(!load.picked_up)return 'Pendiente recogida';
+  }else if(!['Llegó a destino','Descargando'].includes(context.status))return 'Pendiente llegada';
+  return context.status==='Descargando'?null:'Pendiente descarga';
+ }
+ async function loadDeliveries(tripId){const detail=root.querySelector('.driver-detail');if(!detail)return;let box=detail.querySelector('.driver-deliveries');if(!box){box=document.createElement('div');box.className='driver-card driver-deliveries';detail.append(box)}box.innerHTML='<h3>Entregas</h3><p>Cargando cargas…</p>';const version=sessionVersion,view=viewVersion;try{const context=window.DriverMobile?await window.DriverMobile.ensureContext(tripId):null;const data=await api(`/api/driver/trips/${encodeURIComponent(tripId)}/deliveries`);if(version!==sessionVersion||view!==viewVersion)return;box.innerHTML=`<h3>Entregas</h3><p>Registra llegada e inicia descarga antes del POD. La entrega no completa el servicio ni confirma el retorno a base.</p>${data.deliveries?.length?data.deliveries.map(load=>`<div class="driver-delivery-row"><div><b>${esc(load.cargo)}</b><span>${esc(load.status)}</span></div>${load.status==='Entregada'?'<span class="driver-success">Completada</span>':deliveryStage(context,load.id)?`<span>${esc(deliveryStage(context,load.id))}</span>`:'<button class="driver-button delivery-start">Entregar</button>'}</div>`).join(''):'<p>No hay cargas registradas.</p>'}`;if(['Completado','Cancelado'].includes(context?.status)){box.insertAdjacentHTML('afterbegin','<p>El viaje está cerrado. Los pendientes del teléfono se conservan para comprobar su recepción con operaciones.</p>');box.querySelectorAll('.delivery-start').forEach(b=>b.disabled=true);return;}const rows=[...box.querySelectorAll('.driver-delivery-row')];data.deliveries?.forEach((load,index)=>rows[index]?.querySelector('.delivery-start')?.addEventListener('click',()=>{const old=box.querySelector('.driver-delivery-form');old?.remove();box.append(deliveryForm(tripId,load))}))}catch(e){if(version!==sessionVersion||view!==viewVersion)return;box.innerHTML=`<h3>Entregas</h3><p class="driver-error">${esc(e.message)}</p>`}}
  const _driverLoadChecklist=loadChecklist;loadChecklist=async id=>{const version=sessionVersion,view=viewVersion;if(window.DriverMobile)await window.DriverMobile.checklist(id,root.querySelector('.driver-checklist'));else await _driverLoadChecklist(id);if(version===sessionVersion&&view===viewVersion)await loadDeliveries(id)};
- function renderActions(allowed=[]){return `<div class="driver-actions">${allowed.map(s=>`<button class="driver-button driver-status-action" data-status="${esc(s)}">${esc(s)}</button>`).join('')}</div>`}
- function renderDetail(trip,allowed){root.querySelector('.driver-detail').innerHTML=`<button class="driver-link" id="backTrips">← Volver a viajes</button><div class="driver-card"><h2>${esc(trip.trip_number)}</h2>${status(trip.status)}${renderActions(allowed)}<div class="driver-meta"><div><small>Origen</small><b>${esc(trip.origin)}</b></div><div><small>Destino</small><b>${esc(trip.destination)}</b></div><div><small>Salida</small><b>${date(trip.planned_departure)}</b></div><div><small>Camión</small><b>${esc(trip.patente||'No asignado')}</b></div>${trip.composition_snapshot?.trailer?`<div><small>Remolque / semirremolque</small><b>${esc(trip.composition_snapshot.trailer.patente)}</b></div>`:''}<div><small>Cliente</small><b>${esc(trip.client_name||'No informado')}</b></div><div><small>Ruta</small><b>${esc(trip.origin)} → ${esc(trip.destination)}</b></div></div><h3>Cargas</h3>${trip.loads?.length?`<ul class="driver-list">${trip.loads.map(load=>`<li><b>${esc(load.cargo)}</b><span>${esc(load.status)} · ${esc(load.weight_kg)} kg</span></li>`).join('')}</ul>`:'<p>No hay cargas registradas.</p>'}</div><div class="driver-card driver-checklist"><p>Cargando checklist…</p></div>`;root.querySelector('#backTrips').onclick=()=>{if(leaveForm())loadTrips()};root.querySelectorAll('.driver-status-action').forEach(button=>button.onclick=()=>changeStatus(trip.id,button));prepareGps(trip);window.DriverMobile?.workflow(trip,root.querySelector('.driver-detail'),()=>{if(!root.querySelector('.driver-delivery-form'))return loadDeliveries(trip.id);});loadChecklist(trip.id)}
+ function renderActions(allowed=[]){const labels={'En carga':'Iniciar carga','En tránsito':'Iniciar traslado','Detenido':'Registrar detención','Llegó a destino':'Registrar llegada','Descargando':'Iniciar descarga','Completado':'Completar servicio'};return `<div class="driver-actions">${allowed.map(s=>`<button class="driver-button driver-status-action" data-status="${esc(s)}">${esc(labels[s]||s)}</button>`).join('')}</div>`}
+ async function renderDetail(trip,allowed){
+  const version=sessionVersion,view=viewVersion,detail=root.querySelector('.driver-detail');
+  const current=()=>version===sessionVersion&&view===viewVersion&&detail.isConnected;root.querySelector('.driver-detail').innerHTML=`<button class="driver-link" id="backTrips">← Volver a viajes</button><div class="driver-card"><h2>${esc(trip.trip_number)}</h2>${status(trip.status)}${renderActions(allowed)}<div class="driver-meta"><div><small>Origen</small><b>${esc(trip.origin)}</b></div><div><small>Destino</small><b>${esc(trip.destination)}</b></div><div><small>Salida</small><b>${date(trip.planned_departure)}</b></div><div><small>Camión</small><b>${esc(trip.patente||'No asignado')}</b></div>${trip.composition_snapshot?.trailer?`<div><small>Remolque / semirremolque</small><b>${esc(trip.composition_snapshot.trailer.patente)}</b></div>`:''}<div><small>Cliente</small><b>${esc(trip.client_name||'No informado')}</b></div><div><small>Ruta</small><b>${esc(trip.origin)} → ${esc(trip.destination)}</b></div></div><h3>Cargas</h3>${trip.loads?.length?`<ul class="driver-list">${trip.loads.map(load=>`<li><b>${esc(load.cargo)}</b><span>${esc(load.status)} · ${esc(load.weight_kg)} kg</span></li>`).join('')}</ul>`:'<p>No hay cargas registradas.</p>'}</div><div class="driver-card driver-checklist"><p>Cargando checklist…</p></div>`;root.querySelector('#backTrips').onclick=()=>{if(leaveForm())loadTrips()};root.querySelectorAll('.driver-status-action').forEach(button=>button.onclick=()=>changeStatus(trip.id,button));prepareGps(trip);
+  await window.DriverMobile?.workflow(trip,detail,async()=>{
+   if(!current())return;
+   const context=window.DriverMobile.context(trip.id);
+   const response=await api(`/api/driver/trips/${encodeURIComponent(trip.id)}/allowed-statuses`);
+   if(!current())return;
+   trip.status=response.status;prepareGps(trip);
+   const card=detail.querySelector('.driver-actions');
+   if(card){card.outerHTML=renderActions(response.allowed_statuses);detail.querySelectorAll('.driver-status-action').forEach(button=>button.onclick=()=>changeStatus(trip.id,button));}
+   const badge=detail.querySelector('.driver-status');if(badge)badge.textContent=trip.status;
+   if(!detail.querySelector('.driver-delivery-form'))await loadChecklist(trip.id);
+  });
+  if(!current())return;
+  await window.DriverOuting?.mount(trip,detail);
+  if(current()&&!window.DriverMobile)await loadChecklist(trip.id);
+ }
  async function loadDetail(id){
+  window.DriverOuting?.pause();
   const view=++viewVersion,version=sessionVersion,box=root.querySelector('.driver-detail');
   if(!box||signingOut)return;
   box.innerHTML='<p>Cargando detalle…</p>';
@@ -350,7 +381,7 @@
    const trip=await api(`/api/driver/trips/${encodeURIComponent(id)}`);
    if(version!==sessionVersion||view!==viewVersion)return;
    const allowed=(await api(`/api/driver/trips/${encodeURIComponent(id)}/allowed-statuses`)).allowed_statuses;
-   if(version===sessionVersion&&view===viewVersion)renderDetail(trip,allowed);
+   if(version===sessionVersion&&view===viewVersion)await renderDetail(trip,allowed);
   }catch(e){if(version===sessionVersion&&view===viewVersion)box.innerHTML=`<p class="driver-error">${esc(e.message)}</p>`}
  }
  async function loadTrips(){

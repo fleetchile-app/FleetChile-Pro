@@ -34,7 +34,7 @@ test('compatibilidad legacy queda aislada del camino moderno',()=>{
 });
 
 test('GET CRUD genérico filtra por company_id efectivo',()=>{
-  assert.match(source,/app\.get\("\/api\/:table"[\s\S]*?where company_id=\$1 order by id desc/);
+  assert.match(source,/app\.get\("\/api\/:table"[\s\S]*?where company_id=\$1 and \$\{visible\} order by id desc/);
   assert.match(source,/companyId\(req\)/);
 });
 

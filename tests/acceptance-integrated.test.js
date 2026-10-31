@@ -69,12 +69,15 @@ test('aceptación integrada: sesiones, prepago, tres entregas, incidentes, talle
    for(let i=0;i<3;i++){
     await event('arrive','s'+(i+1));const body={...ctx,load_id:Number(loads[i].id),client_submission_id:'pod-acceptance-'+i,recipient_name:'Receptor sintético',signature};
     body.photo=signature;
+    const premature=await call(driver.token,'post','/api/driver/trips/:id/deliveries',body,{id:trip.id});assert.equal(premature.statusCode,409);assert.equal(premature.payload.code,'DELIVERY_UNLOADING_REQUIRED');
+    await ok(driver.token,'patch','/api/driver/trips/:id/status',{status:'Descargando'},{id:trip.id});
     if(i===0){
      const put=h.storage.put;h.storage.put=async args=>{if(args.key.includes('/photo/'))throw Error('synthetic photo storage failure');return put(args);};
      try{const failed=await call(driver.token,'post','/api/driver/trips/:id/deliveries',body,{id:trip.id});assert.equal(failed.statusCode,400);assert.equal(h.objects.size,0);assert.equal((await h.one('select count(*)::int n from trip_delivery_proofs where trip_id=$1',[trip.id])).n,0);}
      finally{h.storage.put=put;}
     }
     await ok(driver.token,'post','/api/driver/trips/:id/deliveries',body,{id:trip.id},201);await ok(driver.token,'post','/api/driver/trips/:id/deliveries',body,{id:trip.id},200);
+    assert.equal((await h.one('select status from trips where id=$1',[trip.id])).status,'Descargando');
     assert.equal((await h.one("select count(*)::int n from trip_loads where trip_id=$1 and status='Entregada'",[trip.id])).n,i+1);await event('depart','s'+(i+1));
    }
    await admin('patch','/api/operations/trips/:id/status',{status:'Completado'},{id:trip.id});assert.equal((await h.one('select count(*)::int n from trip_delivery_proofs where trip_id=$1',[trip.id])).n,3);assert.equal(h.objects.size,6);
