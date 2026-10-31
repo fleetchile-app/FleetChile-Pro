@@ -4,7 +4,9 @@ const {embedded,harness}=require('./helpers/acceptance');
 const Engine=require('../company-purge-engine');
 test('eliminación empresarial aislada: alcance, identidades, auditoría y rollback',{skip:!process.env.FLEETCHILE_TEST_PGLITE},async t=>{
  const runtime=await embedded();try{
-  const {pool}=runtime,h=await harness(pool),a=await h.company('Eliminar QA'),b=await h.company('Conservar QA');
+  const pool=require('./helpers/pg-wire-arrays').pgWireArrays(runtime.pool),h=await harness(pool),a=await h.company('Eliminar QA'),b=await h.company('Conservar QA');
+  const raw=(await pool.query("select array_agg(attname) names from pg_attribute where attrelid='companies'::regclass and attnum>0")).rows[0];assert.equal(typeof raw.names,'string','El adaptador reproduce name[] sin decodificar de node-postgres');
+  const catalog=await Engine.catalog(pool);assert.ok(catalog.tables.every(t=>Array.isArray(t.cols)));assert.ok(catalog.fks.every(f=>Array.isArray(f.cols)&&Array.isArray(f.refs)));
   const platform=await h.account(null,'platform_superadmin','Root QA');
   const truck=await h.one("insert into trucks(company_id,patente,tipo) values($1,'PURGE1','Camión') returning id",[a.id]);
   const trip=await h.one("insert into trips(company_id,trip_number,truck_id,origin,destination) values($1,'PURGE1',$2,'O','D') returning id",[a.id,truck.id]);

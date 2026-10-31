@@ -4,16 +4,17 @@ const quote=s=>'"'+s.replaceAll('"','""')+'"';
 const fail=message=>Object.assign(Error(message),{status:409});
 const indirect=new Set(['client_locations','driver_documents','personnel_notification_reads','telemetry','trip_loads','vehicle_checklists','vehicle_documents','delivery_proof_files','trip_delivery_proofs','trip_status_history','trip_events']);
 async function catalog(db){
- const tables=(await db.query(`select c.oid::int oid,c.relname name,array_agg(a.attname order by a.attnum) cols,
- (select array_agg(x.attname order by k.ord) from pg_index i cross join lateral unnest(i.indkey) with ordinality k(num,ord) join pg_attribute x on x.attrelid=c.oid and x.attnum=k.num where i.indrelid=c.oid and i.indisprimary) pk
+ const tables=(await db.query(`select c.oid::int oid,c.relname name,array_agg(a.attname::text order by a.attnum) cols,
+ (select array_agg(x.attname::text order by k.ord) from pg_index i cross join lateral unnest(i.indkey) with ordinality k(num,ord) join pg_attribute x on x.attrelid=c.oid and x.attnum=k.num where i.indrelid=c.oid and i.indisprimary) pk
  from pg_class c join pg_namespace n on n.oid=c.relnamespace join pg_attribute a on a.attrelid=c.oid and a.attnum>0 and not a.attisdropped where n.nspname='public' and c.relkind='r' group by c.oid,c.relname order by c.relname`)).rows;
  const fks=(await db.query(`select c.oid::int oid,c.conrelid::int child,c.confrelid::int parent,
- array_agg(a.attname order by k.ord) cols,array_agg(b.attname order by k.ord) refs,
- array_agg(a.attname order by k.ord) filter(where not a.attnotnull and a.attname<>'company_id') nullable_cols,
+ array_agg(a.attname::text order by k.ord) cols,array_agg(b.attname::text order by k.ord) refs,
+ array_agg(a.attname::text order by k.ord) filter(where not a.attnotnull and a.attname<>'company_id') nullable_cols,
  bool_or(not a.attnotnull and a.attname<>'company_id') nullable
  from pg_constraint c cross join lateral unnest(c.conkey,c.confkey) with ordinality k(a,b,ord)
  join pg_attribute a on a.attrelid=c.conrelid and a.attnum=k.a join pg_attribute b on b.attrelid=c.confrelid and b.attnum=k.b
  where c.contype='f' group by c.oid,c.conrelid,c.confrelid order by c.oid`)).rows;
+ if(tables.some(t=>!Array.isArray(t.cols)||t.pk!=null&&!Array.isArray(t.pk))||fks.some(f=>!Array.isArray(f.cols)||!Array.isArray(f.refs)||f.nullable_cols!=null&&!Array.isArray(f.nullable_cols)))throw fail('No se pudo interpretar el catálogo de PostgreSQL. No se eliminó ningún dato');
  return {tables,fks};
 }
 const rowKey=(t,a)=>'jsonb_build_array('+t.pk.map(c=>a+'.'+quote(c)).join(',')+')';

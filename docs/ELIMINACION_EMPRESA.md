@@ -36,3 +36,7 @@ No existe recuperación incorporada. PL41 sigue fuera de este cambio. No ejecuta
 ## Verificación
 
 Pruebas aisladas con PostgreSQL embebido, cuentas sintéticas y almacenamiento simulado; ninguna eliminación de una empresa real ni de archivos de Gozunga. Antes de producción: revisión humana, publicación autorizada de la migración 051 y validación en una empresa sintética de staging.
+
+El catálogo devuelve explícitamente `text[]`: `node-postgres` deja `name[]` como texto, a diferencia del motor embebido. La regresión reproduce los parsers reales del controlador sobre los OID del resultado. Los tipos inesperados bloquean el vaciado antes de escribir. Esta prueba no sustituye una conexión PostgreSQL nativa ni valida Render.
+
+El selector de contexto ofrece únicamente empresas habilitadas y conserva la selección previa si el servidor rechaza un cambio. Una empresa inactiva sigue siendo administrable y eliminable: inactivar no equivale a eliminar. El historial de esta sección contiene eliminaciones confirmadas, no intentos fallidos; un fallo transaccional no debe inventar un registro de éxito.

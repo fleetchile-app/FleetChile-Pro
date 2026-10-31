@@ -6,6 +6,17 @@ const vm=require('node:vm');
 
 function loadIdentity(){const elements={activeCompanyName:{},activeCompanyMark:{},activeCompanyUser:{}};const context={Auth:{user:null},document:{getElementById:id=>elements[id]||null,querySelector:()=>null},localStorage:{getItem(){return''},setItem(){},removeItem(){}},fetch(){},Headers};context.window=context;context.addEventListener=()=>{};vm.createContext(context);vm.runInContext(fs.readFileSync(path.join(__dirname,'..','public','auth.js'),'utf8'),context);return {context,elements}}
 
+test('selector excluye inactivas y restaura empresa anterior si el cambio es rechazado',async()=>{
+ const {context,elements}=loadIdentity();let stored='10',reloaded=0;
+ elements.companyContextControl={appendChild(select){elements[select.id]=select;}};
+ context.document.createElement=()=>({value:'',selectedIndex:0,options:[],setAttribute(){},after(el){elements[el.id]=el;},set innerHTML(html){this.options=[...html.matchAll(/<option value="([^"]*)">([^<]*)<\/option>/g)].map(m=>({value:m[1],text:m[2]}));},set value(v){this._value=v;this.selectedIndex=this.options.findIndex(o=>o.value===v);},get value(){return this._value||'';}});
+ context.localStorage.getItem=()=>stored;context.localStorage.setItem=(k,v)=>stored=v;context.localStorage.removeItem=()=>stored='';context.location={reload(){reloaded++;}};
+ context.Auth.request=async path=>{if(path==='/api/companies')return [{id:10,legal_name:'R & S',active:true},{id:20,legal_name:'Inactiva QA',active:false},{id:30,legal_name:'Otra QA',active:true}];throw Error('Empresa no encontrada');};
+ await context.renderActiveIdentity({id:1,name:'Owner',actor_type:'platform',platform_membership_id:1,role_code:'platform_superadmin'});
+ const select=elements.companyContextSelect;assert.equal(select.options.some(o=>o.value==='20'),false);
+ select.value='30';await select.onchange();assert.equal(select.value,'10');assert.equal(elements.activeCompanyName.textContent,'R & S');assert.equal(stored,'10');assert.equal(reloaded,0);assert.match(elements.companyContextError.textContent,/No se cambió de empresa/);
+});
+
 test('identidad activa usa company_name real, usuario y rol sin alterar company_id',()=>{const {context,elements}=loadIdentity();const user={id:7,name:'Ana Pérez',company_id:10,company_name:'Transportes del Sur',role_code:'operations'};context.renderActiveIdentity(user);assert.equal(elements.activeCompanyName.textContent,'Transportes del Sur');assert.equal(elements.activeCompanyMark.textContent,'TD');assert.equal(elements.activeCompanyUser.textContent,'Usuario: Ana Pérez\nRol: Operaciones');assert.equal(user.company_id,10)});
 
 test('cabecera identifica roles conocidos sin asignar privilegios por su etiqueta',()=>{
