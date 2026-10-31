@@ -2,7 +2,7 @@
 const crypto=require('node:crypto');
 const {platformManager}=require('./enterprise-api');
 const E=require('./enterprise-common');
-const retention={business:'Sin borrado automático. Su conservación requiere una política expresamente aprobada.',gps:'Conservación GPS aplazada al cierre específico; no se elimina historial.',audit:'Auditoría y documentos emitidos conservados; no se purgan.',exports:'Copias de exportación privadas y temporales: 24 horas de descarga.',imports:'Borradores vencidos se limpian al cargar otro lote de su empresa; lotes confirmados conservan trazabilidad.'};
+const retention={business:'Sin borrado automático. Su conservación requiere una política expresamente aprobada.',gps:'Historial GPS conservado sin purga automática. La cola privada de Android tiene un límite de 24 horas.',backups:'Copias cifradas con conservación explícita; requieren un runner configurado y un simulacro de restauración verificado.',audit:'Auditoría y documentos emitidos conservados; no se purgan.',exports:'Copias de exportación privadas y temporales: 24 horas de descarga.',imports:'Borradores vencidos se limpian al cargar otro lote de su empresa; lotes confirmados conservan trazabilidad.'};
 const DAYS=86400000;
 function settings(env=process.env){const n=Number(env.MONITOR_TECHNICAL_DAYS||30);if(![15,30,90].includes(n))throw Error('MONITOR_TECHNICAL_DAYS debe ser 15, 30 o 90');return {technicalDays:n};}
 function createOperations(pool,{logger=console,env=process.env}={}){

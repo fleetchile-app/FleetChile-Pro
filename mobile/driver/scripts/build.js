@@ -4,7 +4,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const source = path.resolve(root, '../../public');
 const assets = ['auth.js', 'driver-vault.js', 'checklist-shared.js', 'driver-mobile.js', 'driver-fuel.js', 'driver-outing.js',
-  'company-branding.js', 'driver.js', 'driver.css', 'company-branding.css', 'checklist.css'];
+  'company-branding.js', 'driver-tracking.js', 'driver.js', 'driver.css', 'company-branding.css', 'checklist.css'];
 
 function prepareHtml(html) {
   const driverScript = '<script src="/driver.js"></script>';

@@ -2,7 +2,7 @@
 
 // Loaded before auth.js: its existing wrapper still attaches the Bearer token
 // only to local /api requests. Only those requests are forwarded to Render.
-module.exports = function installNative(win, capacitor, geo) {
+module.exports = function installNative(win, capacitor, geo, tracking = null) {
   if (!capacitor.isNativePlatform()) return;
   const remote = 'https://fleetchile-pro.onrender.com';
   const origin = win.location.origin;
@@ -82,5 +82,13 @@ module.exports = function installNative(win, capacitor, geo) {
         onchange: null
       })) : query(descriptor);
   }
-  win.FleetNative = Object.freeze({ platform: 'android', backgroundGps: false });
+  const available = !!tracking && capacitor.isPluginAvailable?.('FleetTracking') === true;
+  if (available) {
+    win.FleetTracking = Object.freeze({
+      start: options => tracking.start({ tripId: String(options?.tripId ?? ''), token: options?.token }),
+      stop: () => tracking.stop(),
+      status: () => tracking.status()
+    });
+  }
+  win.FleetNative = Object.freeze({ platform: 'android', backgroundGps: available });
 };

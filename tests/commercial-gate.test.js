@@ -29,3 +29,12 @@ test('salida abierta conserva cierre controlado y GPS contratado; no habilita ot
  assert.equal((await call(pool({outing:{id:8,commercial_modules:['operations']},runningGps:true}),'/api/driver/trips/3/outing/positions')).res.statusCode,403);
  assert.equal((await call(pool(),'/api/driver/trips/3/outing/positions')).res.statusCode,403);
 });
+
+test('GPS nativo conserva sólo la operación contratada y permite detener sin ampliar módulos',async()=>{
+ const active={status:'Descargando',commercial_modules:['gps']};
+ assert.equal((await call(pool({trip:active}),'/api/driver/trips/3/tracking/positions')).allowed,true);
+ assert.equal((await call(pool({trip:{...active,commercial_modules:['operations']}}),'/api/driver/trips/3/tracking/positions')).res.statusCode,403);
+ assert.equal((await call(pool({trip:{status:'Completado',commercial_modules:['gps'],outing_gps:true}}),'/api/driver/trips/3/tracking/context',{method:'GET'})).allowed,true);
+ assert.equal((await call(pool({trip:{status:'Completado',commercial_modules:['gps'],outing_gps:false}}),'/api/driver/trips/3/tracking/context',{method:'GET'})).res.statusCode,403);
+ assert.equal((await call(pool(),'/api/driver/trips/3/tracking/stop')).allowed,true);
+});

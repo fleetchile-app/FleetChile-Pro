@@ -9,7 +9,13 @@
     "check:delivery": "node scripts/check-delivery.js",
     "test:acceptance": "node scripts/run-acceptance.js",
     "test:closure": "node scripts/run-acceptance.js --extended",
-    "test:concurrency": "node scripts/run-acceptance.js --postgres"
+    "test:concurrency": "node scripts/run-acceptance.js --postgres",
+    "backup:doctor": "node scripts/backup.js doctor",
+    "backup:create": "node scripts/backup.js create",
+    "backup:verify": "node scripts/backup.js verify",
+    "backup:retain": "node scripts/backup.js retain --apply",
+    "backup:schedule": "node scripts/backup-runner.js schedule",
+    "restore:drill": "node scripts/restore.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1118.0",

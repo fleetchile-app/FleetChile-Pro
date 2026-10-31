@@ -20,6 +20,18 @@ function commercialGate(pool){return async(req,res,next)=>{
    return next();
   }
   if(feature==='gps'){
+   const trackingTrip=path.match(/\/driver\/trips\/(\d+)\/tracking(?:\/(?:context|positions|stop))?$/)?.[1];
+   if(trackingTrip){
+    // The tracking handler revalidates the driver, session, resource version and snapshot.
+    if(path.endsWith('/stop'))return next();
+    const row=(await pool.query(`select t.status,t.commercial_modules,exists(
+     select 1 from operational_outing_services s join operational_outings o on o.id=s.outing_id and o.company_id=s.company_id
+      where s.company_id=t.company_id and s.trip_id=t.id and o.closed_at is null
+       and (o.commercial_modules is null or o.commercial_modules ? 'gps')) outing_gps
+     from trips t where t.company_id=$1 and t.id=$2`,[cid,trackingTrip])).rows[0];
+    if(row&&(row.outing_gps||['En carga','En tránsito','Detenido','Llegó a destino','Descargando'].includes(row.status)&&(row.commercial_modules==null||row.commercial_modules.includes('gps'))))return next();
+    return res.status(403).json({code:'MODULE_NOT_CONTRACTED',error:'Esta operación no conserva una habilitación GPS vigente.'});
+   }
    const returnTrip=path.match(/\/driver\/trips\/(\d+)\/outing\/positions$/)?.[1];
    if(returnTrip){
     const row=(await pool.query(`select o.commercial_modules from operational_outings o join operational_outing_services s on s.outing_id=o.id and s.company_id=o.company_id

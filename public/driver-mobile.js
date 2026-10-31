@@ -98,6 +98,8 @@
    try{
     const ctx=await request(base(trip.id));if(!active(stamp)||!host.isConnected)return;
     contexts.set(String(trip.id),ctx);
+    await window.DriverTracking?.mount?.(trip,detail,ctx);
+    if(!active(stamp)||!host.isConnected)return;
     if(window.DriverFuel&&!detail.querySelector('[data-driver-fuel]'))await window.DriverFuel.mount(trip,detail,ctx);
     if(!active(stamp)||!host.isConnected)return;
     const stop=ctx.next_stop,at=Boolean(stop?.actual_arrival),closed=['Completado','Cancelado'].includes(ctx.status);

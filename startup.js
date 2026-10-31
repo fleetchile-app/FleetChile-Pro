@@ -26,6 +26,7 @@ MIGRATION_FILES.push('049_driver_fuel.sql');
 MIGRATION_FILES.push('050_fuel_corrections.sql');
 MIGRATION_FILES.push('051_company_purge.sql');
 MIGRATION_FILES.push('052_operational_outings.sql');
+MIGRATION_FILES.push('053_driver_tracking.sql');
 
 function timeoutMs(value,fallback){
   const parsed=Number(value);

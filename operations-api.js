@@ -48,6 +48,7 @@ async function registerOperationsRoutes(app,pool,options={}){
  const assertTripResourcesReady=options.assertTripResourcesReady||defaultTripReadiness;
  registerTripLoadTransfer(app,pool,{requirePermission,tripScope});
  require('./operational-outings').registerOperationalOutings(app,pool,{driverAccess,enforceDriverPersonnel});
+ require('./driver-tracking-api').registerDriverTracking(app,pool,{driverAccess,enforceDriverPersonnel});
  require('./driver-workflow-api').registerDriverWorkflow(app,pool,{driverAccess,enforceDriverPersonnel,assertTripResourcesReady});
  const evidenceStorage=options.storage||null;
  require('./driver-fuel-api').registerDriverFuel(app,pool,{driverAccess,enforceDriverPersonnel,storage:evidenceStorage});

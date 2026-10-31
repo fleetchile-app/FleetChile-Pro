@@ -6,3 +6,7 @@ deploy/.env.private
 *.pem
 *.key
 *.p12
+backups/
+recovery-drills/
+*.fcbak
+*.fcbak.enc

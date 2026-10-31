@@ -1,0 +1,12 @@
+ARG PG_MAJOR=18
+FROM postgres:${PG_MAJOR}-alpine
+RUN apk add --no-cache nodejs npm && node -e "if(Number(process.versions.node.split('.')[0])<20)process.exit(1)"
+WORKDIR /opt/fleetchile
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+COPY backup-*.js ./
+COPY scripts/backup*.js scripts/restore*.js ./scripts/
+RUN mkdir /backups && chown postgres:postgres /backups
+USER postgres
+ENV BACKUP_ROOT=/backups
+CMD ["node", "scripts/backup-runner.js", "doctor"]

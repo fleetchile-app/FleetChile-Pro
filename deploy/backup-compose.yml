@@ -1,0 +1,43 @@
+# Opt-in runner only. No app, no source database, no production connection by default.
+# docker compose -f deploy/backup-compose.yml --profile backup run --rm runner
+services:
+  runner:
+    profiles: [backup]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backup
+      args:
+        PG_MAJOR: ${PG_MAJOR:-18}
+    command: [node, scripts/backup-runner.js, doctor]
+    read_only: true
+    tmpfs:
+      - /tmp:mode=0700,uid=70,gid=70
+    volumes:
+      - backup-data:/backups
+    secrets:
+      - backup_key
+      - backup_db_url
+      - source_access_key
+      - source_secret_key
+    environment:
+      BACKUP_KEY_FILE: /run/secrets/backup_key
+      BACKUP_DATABASE_URL_FILE: /run/secrets/backup_db_url
+      BACKUP_SOURCE_S3_ACCESS_KEY_ID_FILE: /run/secrets/source_access_key
+      BACKUP_SOURCE_S3_SECRET_ACCESS_KEY_FILE: /run/secrets/source_secret_key
+      # Configure bucket/region/endpoint explicitly in a private operator override.
+      # Scheduling requires command 'schedule' AND BACKUP_SCHEDULE_ENABLED=yes.
+      # BACKUP_OBJECTS_QUIESCED=yes asserts an operational prerequisite, not an automatic lock.
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+volumes:
+  backup-data:
+secrets:
+  backup_key:
+    file: ${PL41_SECRET_DIR:?Set private secret directory}/backup.key
+  backup_db_url:
+    file: ${PL41_SECRET_DIR:?Set private secret directory}/database.url
+  source_access_key:
+    file: ${PL41_SECRET_DIR:?Set private secret directory}/source-access-key
+  source_secret_key:
+    file: ${PL41_SECRET_DIR:?Set private secret directory}/source-secret-key

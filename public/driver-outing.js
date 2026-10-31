@@ -19,6 +19,11 @@
     if(!o){host.innerHTML='<h3>Salida del equipo</h3><p>Operaciones aún no ha registrado una salida y su base de retorno para este servicio.</p>';return;}
     host.innerHTML=`<h3>Salida del equipo #${Number(o.id)}</h3><p><strong>${esc(states[o.status]||o.status)}</strong></p><p>Base de retorno: ${esc(o.base_name||data.base?.name||'Ubicación #'+o.base_location_id)}.</p>${trip.status==='Completado'&&!o.closed_at?'<p>Servicio entregado. La salida del equipo continúa abierta; sigue las instrucciones de operaciones.</p>':''}${o.status==='returning'?'<button class="driver-button" data-return-gps>Activar ubicación durante el retorno</button><p>El seguimiento funciona mientras la aplicación está activa. No garantiza posiciones con pantalla apagada.</p><form data-return-arrival><label>Observación de llegada<input name="reason" required maxlength="2000"></label><button class="driver-button" type="submit">Confirmar llegada a base</button></form>':''}<p data-return-message role="status" aria-live="polite"></p><button class="driver-link" data-outing-refresh>Actualizar instrucciones</button>`;
     host.querySelector('[data-outing-refresh]').onclick=refresh;
+    if(window.FleetNative?.backgroundGps){
+     const browserGps=host.querySelector('[data-return-gps]');
+     if(browserGps?.nextElementSibling)browserGps.nextElementSibling.textContent='El seguimiento nativo de esta salida continúa durante el retorno mientras su sesión esté autorizada. Consulta su estado en Seguimiento del equipo.';
+     browserGps?.remove();
+    }
     host.querySelector('[data-return-arrival]')?.addEventListener('submit',async e=>{e.preventDefault();const button=e.target.querySelector('button'),message=host.querySelector('[data-return-message]');button.disabled=true;try{await api('/action',{version:o.version,action:'arrive_base',reason:e.target.elements.reason.value});if(valid())await refresh();}catch(err){if(valid())message.textContent=err.message;}finally{if(button.isConnected)button.disabled=false;}});
     host.querySelector('[data-return-gps]')?.addEventListener('click',e=>{
      const button=e.target,message=host.querySelector('[data-return-message]');

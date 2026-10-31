@@ -8,6 +8,7 @@
  let gpsMessage='Abre un viaje En tránsito o Detenido para activar la ubicación.',gpsMode='paused',gpsConfirmed=null;
  const status=v=>`<span class="driver-status">${esc(v||'Sin estado')}</span>`;
  function expireSession(){
+  (window.DriverTracking?.stop?.())?.catch?.(()=>{});
   stopGps();window.DriverMobile?.pause();sessionVersion++;viewVersion++;Auth.token='';Auth.user=null;
   localStorage.removeItem('fleet_token');localStorage.removeItem('fleet_company_context');
   login('Tu sesión venció. Inicia sesión nuevamente.');
@@ -19,6 +20,7 @@
   if(version!==sessionVersion)throw new Error('La sesión cambió.');
   if(r.status===401)expireSession();
   if(data.code==='PERSONNEL_ACCESS_BLOCKED'){
+   (window.DriverTracking?.stop?.())?.catch?.(()=>{});
    stopGps('Acceso suspendido. Solicita a administración revisar tu habilitación.');
    gpsNeedsReview=true;viewVersion++;
    authenticatedScreen('<div class="driver-card driver-error" role="alert"><h1>Acceso temporalmente restringido</h1><p>Administración debe revisar tu habilitación. El GPS se ha detenido. Puedes cerrar sesión desde Mi cuenta.</p></div>');
@@ -49,6 +51,7 @@
  async function logoutDriver(){
   if(signingOut||!confirm('¿Cerrar sesión? Se detendrá el GPS en este dispositivo y se perderán los datos sin guardar.'))return;
   try{if(window.DriverMobile&&!await window.DriverMobile.logout())return;}catch(e){alert('No se pudo revisar el almacenamiento local: '+e.message);return;}
+  if(window.DriverTracking?.stop)try{await window.DriverTracking.stop();}catch(e){alert('No se pudo detener el seguimiento nativo: '+e.message);return;}
   signingOut=true;stopGps();sessionVersion++;viewVersion++;
   root.innerHTML='<section class="driver-shell"><div class="driver-card" role="status"><h1>Cerrando sesión…</h1><p>GPS detenido. Espera la confirmación antes de dejar el dispositivo.</p></div></section>';
   const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),8000);
@@ -85,6 +88,7 @@
  async function changeStatus(id,button){const version=sessionVersion,view=viewVersion;button.disabled=true;try{await api(`/api/driver/trips/${encodeURIComponent(id)}/status`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:button.dataset.status})});if(version===sessionVersion&&view===viewVersion)await loadDetail(id)}catch(error){const box=root.querySelector('.driver-actions');box?.insertAdjacentHTML('beforeend',`<p class="driver-error">${esc(error.message)}</p>`)}finally{button.disabled=false}}
  function gpsEligible(trip){return Boolean(trip?.truck_id)&&['En tránsito','Detenido'].includes(trip.status)}
  function gpsPanel(){
+  if(window.FleetNative?.backgroundGps)return '';
   return '<section class="driver-card driver-location-panel" aria-label="Ubicación del viaje"><h2>Ubicación del viaje</h2><p data-gps-summary role="status" aria-live="polite" tabindex="-1"></p><p data-gps-identity></p><p data-gps-last></p><p class="driver-gps-help">La ubicación de este teléfono se enviará para el viaje indicado mientras uses FleetChile. Se pausa al cambiar de app o bloquear la pantalla. Al volver se comprueban sesión y viaje antes de reanudar. Si está bloqueada, revisa Ubicación en los permisos de FleetChile o del sitio en el navegador y activa la ubicación de Android.</p><div class="driver-gps-controls"><button type="button" class="driver-button" data-gps-start>Activar ubicación</button><button type="button" class="driver-link" data-gps-stop>Detener ubicación</button></div></section>';
  }
  function renderGps(){
@@ -218,6 +222,7 @@
  window.addEventListener?.('online',resumeGps);
  window.addEventListener?.('storage',event=>{
   if(event.key==='fleet_token'&&event.newValue!==Auth.token){
+   (window.DriverTracking?.stop?.())?.catch?.(()=>{});
    stopGps('La sesión cambió en otra ventana.');sessionVersion++;viewVersion++;Auth.token='';Auth.user=null;
    login('La sesión cambió en otra ventana. Inicia sesión para continuar.');
   }
@@ -370,6 +375,7 @@
   });
   if(!current())return;
   await window.DriverOuting?.mount(trip,detail);
+  if(current()&&!window.DriverMobile)await window.DriverTracking?.mount?.(trip,detail,null);
   if(current()&&!window.DriverMobile)await loadChecklist(trip.id);
  }
  async function loadDetail(id){
