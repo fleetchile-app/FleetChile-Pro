@@ -13,4 +13,8 @@
 .commercial-quote{border:1px solid #dce5ef;border-radius:10px;padding:18px;margin:14px 0;background:#fff}
 .commercial-quote button{margin:8px 8px 0 0}
 .commercial-panel summary{cursor:pointer;padding:12px 0}
+.commercial-progress{border:1px solid #cbd9e7;border-radius:10px;background:#f8fbfe;color:#173b5d;padding:18px;margin-bottom:18px}
+.commercial-progress ol{display:flex;flex-wrap:wrap;gap:12px 32px;padding-left:24px}
+.commercial-wizard-nav{display:flex;align-items:center;flex-wrap:wrap;gap:12px}
+.commercial-wizard-nav p{flex-basis:100%;font-weight:600}
 @media(max-width:700px){.commercial-grid{grid-template-columns:minmax(0,1fr)}.commercial-panel form{padding:12px}}

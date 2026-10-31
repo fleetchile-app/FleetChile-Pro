@@ -26,3 +26,11 @@ test('textos empresariales se escapan y una respuesta tardía no reemplaza otra 
 });
 test('plataforma ofrece habilitación explícita, manteniendo las acciones separadas del inventario',async()=>{const s=surface({platform:true,data:fixture()});await s.render();assert.match(s.host.innerHTML,/data-seat="4"/);assert.match(s.elements['[data-new-form]'].innerHTML,/Preparar propuesta comercial/);});
 test('CSS comercial queda acotado al componente, sin iconos SVG ni reglas globales de sidebar',()=>{const css=fs.readFileSync(require.resolve('../public/commercial.css'),'utf8');assert.doesNotMatch(css,/\bsvg\b|\bsidebar\b|\baside\b/);assert.match(css,/min-height:44px/);assert.match(css,/@media\(max-width:700px\)/);});
+
+test('estado comercial distingue aceptación, pago, período futuro y habilitación sin exigir ocupar todos los cupos',async()=>{
+ for(const [state,events,expected] of [['unconfigured',[],'Aceptación pendiente'],['unconfigured',[{kind:'accepted'}],'Pago pendiente'],['scheduled',[],'Período pagado: inicio pendiente'],['expired',[],'Período vencido: renovar'],['active',[],'Habilitación comercial vigente']]){
+  const data=fixture();data.state=state;if(state!=='active')data.active=null;
+  if(state==='unconfigured')data.quotes=[{id:1,kind:'initial',configuration:fixture().active.configuration,events,base_version:1,valid_until:new Date(Date.now()+86400000).toISOString()}];
+  const s=surface({data});await s.render();assert.ok(s.host.innerHTML.includes(expected),expected);
+ }
+});
