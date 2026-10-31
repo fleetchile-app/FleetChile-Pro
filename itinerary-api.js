@@ -128,7 +128,8 @@ function registerItineraryRoutes(app,pool,router){
   res.json({rows,page,page_size:10,total:(await pool.query('select count(*)::int total from trip_itinerary_revisions where company_id=$1 and trip_id=$2',[trip.company_id,trip.id])).rows[0].total});
  });
  route('put',BASE,'trips.manage',async(req,res,trip)=>{
-  const b=req.body||{},version=E.id(b.version,'Versión',{zero:true}),resourceVersion=E.id(b.resource_version,'Versión de recursos',{zero:true}),p=D.normalize(b),reason=E.text(b.reason,'Motivo',2000);
+  const b=req.body||{},version=E.id(b.version,'Versión',{zero:true}),resourceVersion=E.id(b.resource_version,'Versión de recursos',{zero:true}),p=D.normalize(b);
+  let reason=D.optionalText(b.reason,'Observación del cambio');
   if(terminal(trip.status))throw D.fail('No se modifica el itinerario de un viaje cerrado',409);
   if(version!==trip.itinerary_version||resourceVersion!==trip.resource_version)throw D.fail('El viaje cambió; recarga antes de guardar',409,'ITINERARY_STALE');
   const baseline=version?await currentPlan(pool,trip):null,priorEvents=version?(await loadState(pool,trip)).events:[];
@@ -138,6 +139,8 @@ function registerItineraryRoutes(app,pool,router){
   p.stops=p.stops.map(s=>{const frozen=baseline?.plan.stops.find(old=>old.key===s.key&&old.location_id===s.location_id&&priorEvents.some(e=>e.stop_key===s.key&&['arrive','depart'].includes(e.kind)));return frozen?{...s,location:{...frozen.location}}:s;});
   D.preserveProgress(baseline?.plan,p,priorEvents);C.preserveHistory(baseline?.plan,p,priorEvents);
   if(C.endpointChange(trip,p)&&b.endpoint_change_ack!==true)throw D.fail('Cambiarás el origen o destino confirmado del viaje. Revisa y confirma expresamente el cambio.',409,'ITINERARY_LOCATION_CONFLICT');
+  // Reject unexplained plan changes before contacting the routing provider.
+  D.planReason(baseline?.plan,p,reason,C.endpointChange(trip,p));
   let legs;try{legs=await Promise.all(p.stops.slice(1).map((s,i)=>baseline?.plan.stops[i]?.key===p.stops[i].key&&baseline?.plan.stops[i+1]?.key===s.key&&priorEvents.some(e=>e.stop_key===s.key&&e.kind==='arrive')?baseline.plan.legs[i]:router.route(p.stops[i].location,s.location)));}catch{throw D.fail('No se pudo calcular la ruta vial. No se guardaron distancias ni tiempos inventados.',502,'ITINERARY_ROUTING_UNAVAILABLE');}
   if(!legs.every(D.routeValid))throw D.fail('No hay una ruta válida para todos los tramos',502,'ITINERARY_ROUTING_UNAVAILABLE');
   const db=await pool.connect();try{
@@ -153,6 +156,8 @@ function registerItineraryRoutes(app,pool,router){
    D.preserveProgress(old?.plan,p,state.events);
    C.preserveHistory(old?.plan,p,state.events);
    if((b.load_locations_token!==undefined&&b.load_locations_token!==C.token(state.loads))||(b.load_locations_ack===true&&C.loadChanges(p,state.loads).length&&!b.load_locations_token))throw D.fail('Las ubicaciones de las cargas cambiaron o falta la revisión vigente. Recarga el planificador antes de confirmar.',409,'ITINERARY_STALE');
+   const confirmedLoadChange=C.loadChanges(p,state.loads).some(c=>c.load[c.field+'_location_id']!=null);
+   reason=D.planReason(old?.plan,p,reason,C.endpointChange(locked,p)||confirmedLoadChange);
    await C.reconcileLoads(db,req,locked,p,state.loads,state.events,b.load_locations_ack,reason);
    for(const load of state.loads.filter(l=>l.status==='Entregada'||l.delivered_at)){
     const before=old?.plan.loads.find(l=>String(l.load_id)===String(load.id)),after=p.loads.find(l=>String(l.load_id)===String(load.id));

@@ -9,7 +9,7 @@ En **Viajes → detalle → Resumen**, el panel **Itinerario, cargas y tiempos**
 3. Abrir el planificador y seleccionar ubicaciones operacionales de la empresa. Si falta una dirección, el botón de registro usa la geocodificación existente; un fallo no genera coordenadas ficticias.
 4. Ordenar entre 2 y 12 paradas, indicando propósito y minutos de atención, espera y descanso.
 5. Vincular cada carga a una recogida y una entrega posterior. Una parada mixta descarga antes de recoger.
-6. Indicar salida, contingencia, motivo y revisión operacional de restricciones.
+6. Indicar salida y contingencia, y confirmar la revisión operacional de restricciones. La primera planificación y la confirmación sin cambios no exigen comentario. Una única observación al final explica los cambios de paradas, horarios, cargas o puntos previamente confirmados; el servidor aplica la misma regla y conserva autor e historial.
 7. **Calcular ruta y guardar versión** obtiene del proveedor cada tramo por carretera. Conserva geometría, distancia, duración, fuente y fecha, y actualiza la planificación del viaje dentro de una transacción.
 8. Durante la ejecución, registrar llegadas y salidas en orden. Las entregas y evidencias conservan el circuito POD existente. Las incidencias son registros independientes; no entregan cargas ni completan el viaje.
 

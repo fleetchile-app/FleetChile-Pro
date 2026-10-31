@@ -4,6 +4,19 @@ const kinds=['pickup','delivery','mixed','rest','toll','weigh','other'];
 const fail=(m,status=400,code='ITINERARY_INVALID')=>E.fail(m,status,code);
 const key=v=>{if(typeof v!=='string'||!/^[-a-zA-Z0-9_]{1,48}$/.test(v))throw fail('Identificador de parada no válido');return v;};
 function minutes(v,label){const n=Number(v??0);if(!Number.isInteger(n)||n<0||n>10080)throw fail(label+' debe contener minutos entre 0 y 10080');return n;}
+function optionalText(v,label){if(v==null)return '';if(typeof v!=='string'||v.length>2000)throw fail(label+' admite hasta 2000 caracteres');return v.trim();}
+function planChanged(previous,next){
+ if(!previous)return false;
+ const comparable=p=>({departure:Date.parse(p.departure),contingency_minutes:Number(p.contingency_minutes||0),
+  stops:p.stops.map(s=>[s.key,String(s.location_id),s.purpose,...['service_minutes','wait_minutes','rest_minutes'].map(k=>Number(s[k]||0)),s.location?.lat==null?null:Number(s.location.lat),s.location?.lng==null?null:Number(s.location.lng)]),
+  loads:p.loads.map(l=>[String(l.load_id),l.pickup,l.delivery]).sort((a,b)=>a[0].localeCompare(b[0]))});
+ return JSON.stringify(comparable(previous))!==JSON.stringify(comparable(next));
+}
+function planReason(previous,next,value,confirmedPointsChanged=false){
+ const reason=optionalText(value,'Observación del cambio');
+ if((planChanged(previous,next)||confirmedPointsChanged)&&!reason)throw fail('Indica una observación que explique el cambio del itinerario',400,'ITINERARY_REASON_REQUIRED');
+ return reason||(previous?'Confirmación del itinerario sin cambios':'Planificación inicial');
+}
 function normalize(b){
  if(!Array.isArray(b.stops)||b.stops.length<2||b.stops.length>12)throw fail('Define entre 2 y 12 paradas ordenadas');
  const seen=new Set(),stops=b.stops.map(s=>{
@@ -22,7 +35,7 @@ function normalize(b){
   return {load_id:id,pickup,delivery};
  });
  const review=b.vehicle_review;if(!review||review.acknowledged!==true)throw fail('Confirma la revisión operacional de restricciones del vehículo');
- return {stops,loads,departure:E.instant(b.departure,'Salida'),contingency_minutes:minutes(b.contingency_minutes,'Contingencia'),vehicle_review:{acknowledged:true,notes:E.text(review.notes,'Revisión de peso, altura, dimensiones y accesos',2000)}};
+ return {stops,loads,departure:E.instant(b.departure,'Salida'),contingency_minutes:minutes(b.contingency_minutes,'Contingencia'),vehicle_review:{acknowledged:true,notes:optionalText(review.notes,'Revisión de peso, altura, dimensiones y accesos')}};
 }
 function signature(loads){return loads.map(l=>[String(l.id),String(l.client_id),l.weight_kg==null?null:String(l.weight_kg)]).sort((a,b)=>a[0].localeCompare(b[0]));}
 function capacityPlan(stops,mapping,loads,capacityT,events=[],historicCapacities=[]){
@@ -95,4 +108,4 @@ function eta(plan,events,telemetry,now=new Date()){
  },0);
  return {state,source,estimated_arrival:new Date(Math.max(+now,base+remaining*1000+plan.contingency_minutes*60000+delays*1000)).toISOString(),next_stop:stops[next].key,gps_recorded_at:telemetry?.recorded_at||null,delay_seconds:delays};
 }
-module.exports={fail,key,minutes,normalize,signature,capacityPlan,routeValid,schedule,progress,outcomes,preserveProgress,projection,eta};
+module.exports={fail,key,minutes,optionalText,planChanged,planReason,normalize,signature,capacityPlan,routeValid,schedule,progress,outcomes,preserveProgress,projection,eta};

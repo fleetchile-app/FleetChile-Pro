@@ -14,6 +14,29 @@ test('detalle presenta tiempos separados, paradas, cargas y GPS desactualizado s
 test('planificador selecciona ubicaciones y recogida/entrega, no pide distancias inventadas',async()=>{
  const s=surface();await s.open();await s.click('edit');assert.match(s.elements.form.innerHTML,/<select name="s0_location_id"/);assert.match(s.elements.form.innerHTML,/<select name="l9_delivery"/);assert.match(s.elements.form.querySelector('[type=submit]').textContent,/Calcular ruta y guardar versión/);assert.doesNotMatch(s.elements.form.innerHTML,/name="distance/);
 });
+
+test('una única observación al final: no exige texto sin cambios y se exige al modificar y deja de exigir al revertir',async()=>{
+ const s=surface();await s.open();await s.click('edit');const form=s.elements.form;
+ assert.equal((form.innerHTML.match(/name="reason"/g)||[]).length,1);assert.doesNotMatch(form.innerHTML,/name="review"|Motivo de este plan/);
+ assert.ok(form.innerHTML.indexOf('name="reason"')>form.innerHTML.indexOf('name="acknowledged"'));
+ assert.equal(form.querySelector('[name=reason]').required,false);
+ const d=new Date(plan.departure);form.values={departure:new Date(+d-d.getTimezoneOffset()*60000).toISOString().slice(0,19),contingency_minutes:'10',reason:'',s0_location_id:'1',s0_purpose:'pickup',s0_service_minutes:'10',s0_wait_minutes:'0',s0_rest_minutes:'0',s1_location_id:'2',s1_purpose:'delivery',s1_service_minutes:'10',s1_wait_minutes:'0',s1_rest_minutes:'0',l9_pickup:'a',l9_delivery:'b'};
+ form.oninput();assert.equal(form.querySelector('[name=reason]').required,false);
+ form.values.s1_service_minutes='30';form.oninput();assert.equal(form.querySelector('[name=reason]').required,true);
+ form.values.s1_service_minutes='10';form.oninput();assert.equal(form.querySelector('[name=reason]').required,false);
+ await s.submit(form.values);const body=JSON.parse(s.calls.find(c=>c.o.method==='PUT').o.body);assert.equal(body.reason,'');assert.equal(body.vehicle_review.notes,plan.vehicle_review.notes);
+});
+
+test('primera planificación con puntos confirmados no exige comentario ni detalle de revisión',async()=>{
+ const s=surface((url)=>{if(url.endsWith('/options'))return structuredClone({...opts,trip:{origin_location_id:1,destination_location_id:2,planned_departure:plan.departure}});if(url.endsWith('/itinerary'))return structuredClone({...data,revision:null,version:0,progress:[]});});
+ await s.open();await s.click('edit');assert.equal(s.elements.form.querySelector('[name=reason]').required,false);assert.doesNotMatch(s.elements.form.innerHTML,/name="review"/);
+});
+
+test('los eventos del planificador no interfieren al reutilizar el modal para otra ficha',async()=>{
+ const s=surface();await s.open();await s.click('edit');const form=s.elements.form,query=form.querySelector.bind(form);
+ form.querySelector=selector=>selector==='#it-observation'?null:query(selector);form.values={};
+ assert.doesNotThrow(()=>form.oninput());assert.doesNotThrow(()=>form.onchange({target:{name:'minutes'}}));
+});
 test('guardar envía versiones y minutos declarados, sin confiar coordenadas, proveedor ni empresa al cliente',async()=>{
  const s=surface();await s.open();await s.click('edit');await s.submit({departure:'2026-11-01T08:00',contingency_minutes:'10',reason:'Plan fixture',review:'Revisión fixture',acknowledged:'true',s0_location_id:'1',s0_purpose:'pickup',s0_service_minutes:'10',s0_wait_minutes:'0',s0_rest_minutes:'0',s1_location_id:'2',s1_purpose:'delivery',s1_service_minutes:'10',s1_wait_minutes:'0',s1_rest_minutes:'0',l9_pickup:'a',l9_delivery:'b'});
  const c=s.calls.find(c=>c.o.method==='PUT'),b=JSON.parse(c.o.body);assert.equal(b.version,2);assert.equal(b.resource_version,3);assert.equal(b.stops[0].service_minutes,10);assert.equal(b.loads[0].delivery,'b');assert.equal('company_id' in b,false);assert.equal('legs' in b,false);assert.equal('location' in b.stops[0],false);

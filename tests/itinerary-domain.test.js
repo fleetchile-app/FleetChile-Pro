@@ -8,6 +8,21 @@ test('normalización exige paradas únicas, orden, propósito y revisión explí
  b.loads[0].delivery='b';b.stops[1].key='a';assert.throws(()=>D.normalize(b),/distintos/);
  assert.throws(()=>D.normalize({...raw(),departure:'2026-02-30T08:00:00Z'}));
 });
+
+test('primera planificación y confirmación sin cambios no exigen observación; los cambios sí',()=>{
+ const p=D.normalize({...raw(),vehicle_review:{acknowledged:true}});
+ assert.equal(p.vehicle_review.notes,'');assert.equal(D.planReason(null,p,''),'Planificación inicial');
+ const same=structuredClone(p);same.loads.reverse();same.vehicle_review.notes='Otra nota';same.departure='2026-11-01T08:00:00.000Z';
+ assert.equal(D.planChanged(p,same),false);assert.equal(D.planReason(p,same,''),'Confirmación del itinerario sin cambios');
+ for(const change of [n=>n.stops.push({...n.stops[2],key:'d'}),n=>n.stops.reverse(),n=>n.stops[1].location_id=8,n=>n.stops[1].wait_minutes++,n=>n.loads[0].delivery='c',n=>n.contingency_minutes++,n=>n.departure='2026-11-01T09:00:00Z']){
+  const next=structuredClone(p);change(next);assert.throws(()=>D.planReason(p,next,''),e=>e.code==='ITINERARY_REASON_REQUIRED');
+  assert.equal(D.planReason(p,next,'  Desvío solicitado  '),'Desvío solicitado');
+ }
+ assert.throws(()=>D.planReason(null,p,'',true),e=>e.code==='ITINERARY_REASON_REQUIRED');
+ const mapped=structuredClone(p);mapped.stops[0].location={lat:-36,lng:-73};const moved=structuredClone(mapped);moved.stops[0].location.lat=-35;
+ assert.throws(()=>D.planReason(mapped,moved,''),e=>e.code==='ITINERARY_REASON_REQUIRED');
+ assert.throws(()=>D.planReason(null,p,'x'.repeat(2001)));assert.throws(()=>D.normalize({...raw(),vehicle_review:{acknowledged:true,notes:123}}));
+});
 test('capacidad se calcula por tramo: descarga antes de recoger, sin sumar cargas de todo el viaje',()=>{
  const p=D.normalize(raw()),loads=[{id:1,weight_kg:6000},{id:2,weight_kg:6000}],c=D.capacityPlan(p.stops,p.loads,loads,10);
  assert.deepEqual(c.segments.map(s=>s.weight_kg),[6000,6000]);assert.equal(c.overloaded,false);assert.equal(c.verified,true);

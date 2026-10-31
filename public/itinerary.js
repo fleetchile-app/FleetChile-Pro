@@ -4,7 +4,7 @@
  const identity=()=>String(window.Auth?.token||'')+'|'+String(localStorage.getItem('fleet_company_context')||'')+'|'+String(window.Auth?.user?.company_id||'');
  const api=(id,path='',method='GET',body)=>window.Auth.request('/api/operations/trips/'+id+'/itinerary'+path,{method,...(body?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});
  const date=v=>v?new Date(v).toLocaleString('es-CL'):'—',hours=s=>(Number(s)/3600).toLocaleString('es-CL',{maximumFractionDigits:2})+' h';
- const local=v=>{const d=v?new Date(v):new Date();return new Date(+d-d.getTimezoneOffset()*60000).toISOString().slice(0,16);};
+ const local=v=>{const d=v?new Date(v):new Date();return new Date(+d-d.getTimezoneOffset()*60000).toISOString().replace(/Z$/,'').replace(/\.000$/,'');};
  const types=[['pickup','Recogida'],['delivery','Entrega'],['mixed','Recogida y entrega'],['rest','Descanso'],['toll','Peaje'],['weigh','Pesaje'],['other','Otra parada']];
  const eventLabels={arrive:'Llegada',depart:'Salida',failed:'Entrega fallida',partial:'Entrega parcial',reschedule:'Reprogramación solicitada',delay:'Demora / incidente',pending:'Pendiente',delivered:'Entregada'};
  const options=(rows,v,empty='Seleccionar')=>`<option value="">${esc(empty)}</option>`+rows.map(r=>`<option value="${esc(r[0])}" ${String(r[0])===String(v)?'selected':''}>${esc(r[1])}</option>`).join('');
@@ -40,11 +40,23 @@
   let draft={departure:local(old?.departure||trip.planned_departure),contingency_minutes:old?.contingency_minutes||0,reason:'',review:old?.vehicle_review.notes||'',loads:opts.loads.map(l=>{const saved=old?.loads.find(m=>String(m.load_id)===String(l.id));if(saved)return {...saved};return {load_id:Number(l.id),pickup:l.origin_location_id?stops.find(s=>String(s.location_id)===String(l.origin_location_id))?.key||'':l.origin?'':stops[0].key,delivery:l.destination_location_id?stops.find(s=>String(s.location_id)===String(l.destination_location_id))?.key||'':l.destination?'':stops.at(-1).key};})};
   let form;
   const capture=()=>{
-   if(!form)return;const b=Object.fromEntries(new FormData(form));draft={...draft,departure:b.departure,contingency_minutes:b.contingency_minutes,reason:b.reason,review:b.review,endpoint_ack:b.endpoint_change_ack==='true',load_ack:b.load_locations_ack==='true'};
+   if(!form)return;const b=Object.fromEntries(new FormData(form));draft={...draft,departure:b.departure,contingency_minutes:b.contingency_minutes,reason:b.reason||'',endpoint_ack:b.endpoint_change_ack==='true',load_ack:b.load_locations_ack==='true'};
    stops.forEach((s,i)=>{for(const f of ['location_id','purpose','service_minutes','wait_minutes','rest_minutes'])s[f]=b['s'+i+'_'+f];});
    draft.loads=opts.loads.map(l=>({load_id:Number(l.id),pickup:b['l'+l.id+'_pickup'],delivery:b['l'+l.id+'_delivery']}));
   };
   let previewMap=null;
+  function requiresObservation(){
+   const comparable=p=>({departure:Date.parse(p.departure),contingency_minutes:Number(p.contingency_minutes||0),
+    stops:p.stops.map(s=>{const l=s.location||opts.locations.find(l=>String(l.id)===String(s.location_id));return [s.key,String(s.location_id),s.purpose,...['service_minutes','wait_minutes','rest_minutes'].map(k=>Number(s[k]||0)),l?.lat==null?null:Number(l.lat),l?.lng==null?null:Number(l.lng)];}),
+    loads:p.loads.map(l=>[String(l.load_id),l.pickup,l.delivery]).sort((a,b)=>a[0].localeCompare(b[0]))});
+   if(old&&JSON.stringify(comparable(old))!==JSON.stringify(comparable({...draft,stops:stops.map(s=>({...s,location:opts.locations.find(l=>String(l.id)===String(s.location_id))}))})))return true;
+   if(['origin','destination'].some((f,i)=>trip[f+'_location_id']!=null&&String(trip[f+'_location_id'])!==String((i?stops.at(-1):stops[0]).location_id)))return true;
+   return opts.loads.some(load=>{const m=draft.loads.find(m=>String(m.load_id)===String(load.id));return [['origin','pickup'],['destination','delivery']].some(([f,k])=>load[f+'_location_id']!=null&&String(load[f+'_location_id'])!==String(stops.find(s=>s.key===m?.[k])?.location_id));});
+  }
+  function updateObservation(){
+   const required=requiresObservation();form.querySelector('[name=reason]').required=required;
+   form.querySelector('#it-reason-help').textContent=required?'Explica el motivo de los cambios antes de guardar.':'Sin comentario obligatorio: primera planificación o confirmación sin cambios.';
+  }
   function coherence(){
    const endpointChange=['origin','destination'].some((f,i)=>trip[f+'_location_id']!=null&&String(trip[f+'_location_id'])!==String((i?stops.at(-1):stops[0]).location_id));
    const changes=opts.loads.flatMap(load=>{
@@ -98,20 +110,22 @@
    const stopOptions=stops.map((s,i)=>[s.key,(i+1)+'. '+(opts.locations.find(l=>String(l.id)===String(s.location_id))?.name||'Parada')]);
    form=modal('Planificar itinerario y tiempos',`<p class="it-help">Ordena las paradas. Al guardar se calculan los tramos por carretera y se conserva una nueva versión. Los tiempos de atención, espera y descanso se suman una sola vez. Máximo 12 paradas.</p><p class="it-current-route"><strong>Puntos registrados en este viaje:</strong> ${esc(trip.origin||'Origen pendiente')} → ${esc(trip.destination||'Destino pendiente')}. ${old?'Se carga el itinerario vigente.':'Se precargan sus puntos confirmados y los de las cargas; revisa el orden antes de guardar.'}</p>
     <details class="it-stop"><summary>Recorridos guardados (opcional)</summary><p class="it-help">Catálogo de la empresa, no recorrido seleccionado de este viaje. Usar una plantilla requiere revisar sus diferencias. No copia camión, conductor, avance ni estado.</p><label>Buscar origen o destino<input id="it-saved-query" type="search" maxlength="120" value="${esc(savedQuery)}"></label><div class="it-actions"><button type="button" class="secondary" id="it-saved-browse">Ver recorridos guardados</button><button type="button" class="secondary" id="it-saved-save">Guardar origen y destino como recorrido</button></div><div class="it-saved-list" id="it-saved-routes"></div></details><p role="status" id="it-saved-status"></p>
-    <div class="it-grid">${input('departure','Salida',draft.departure,'datetime-local','required')}${input('contingency_minutes','Margen de contingencia (min)',draft.contingency_minutes,'number','min="0" max="10080" required')}${input('reason','Motivo de este plan o cambio',draft.reason,'text','required maxlength="2000"')}</div>
+    <div class="it-grid">${input('departure','Salida',draft.departure,'datetime-local','required step="0.001"')}${input('contingency_minutes','Margen de contingencia (min)',draft.contingency_minutes,'number','min="0" max="10080" required')}</div>
     ${stops.map((s,i)=>`<div class="it-stop"><h4>Parada ${i+1}</h4><small>${esc(locationText(opts.locations.find(l=>String(l.id)===String(s.location_id))))}</small><div class="it-grid">${select('s'+i+'_location_id','Ubicación',opts.locations.map(l=>[l.id,locationText(l)]),s.location_id)}${select('s'+i+'_purpose','Propósito',types,s.purpose)}${input('s'+i+'_service_minutes','Carga / descarga / atención (min)',s.service_minutes,'number','min="0" max="10080" required')}${input('s'+i+'_wait_minutes','Espera prevista (min)',s.wait_minutes,'number','min="0" max="10080" required')}${input('s'+i+'_rest_minutes','Descanso (min)',s.rest_minutes,'number','min="0" max="10080" required')}</div><div class="it-actions"><button type="button" class="secondary" data-it-move="${i}" data-direction="-1" ${!i?'disabled':''}>Subir</button><button type="button" class="secondary" data-it-move="${i}" data-direction="1" ${i===stops.length-1?'disabled':''}>Bajar</button><button type="button" class="secondary" data-it-remove="${i}" ${stops.length<=2?'disabled':''}>Quitar</button></div></div>`).join('')}
     <div class="it-actions"><button type="button" class="secondary" id="it-add" ${stops.length>=12?'disabled':''}>Agregar parada</button><button type="button" class="secondary" id="it-location">Registrar ubicación en mapa</button></div>
     <h4>Recogida y entrega de cada carga</h4>${opts.loads.map(l=>{const v=draft.loads.find(x=>x.load_id===Number(l.id))||{};return `<div class="it-stop"><strong>${esc(l.cargo)} · ${esc(l.client_name)} · ${esc(l.weight_kg??'Sin peso')} kg</strong><div class="it-grid">${select('l'+l.id+'_pickup','Se recoge en',stopOptions,v.pickup)}${select('l'+l.id+'_delivery','Se entrega en',stopOptions,v.delivery)}</div></div>`;}).join('')||'<p>No hay cargas registradas. Puedes planificar el recorrido; agrega y vincula las cargas antes de operar.</p>'}
     <p class="it-warning">Ruta genérica: no certifica peso máximo de la vía, altura, dimensiones, accesos ni restricciones para camiones. Verifica estos puntos para el equipo asignado.</p>
-    <label><span><input name="acknowledged" type="checkbox" value="true" required style="width:auto;min-height:0"> Confirmo la revisión operacional de la ruta.</span></label>${input('review','Detalle de la revisión y restricciones comprobadas',draft.review,'text','required maxlength="2000"')}<p class="it-help">Un pinchazo u otra incidencia se registra cuando ocurre. El margen de contingencia no representa una incidencia real.</p>`,async()=>{
+    <label><span><input name="acknowledged" type="checkbox" value="true" required style="width:auto;min-height:0"> Confirmo la revisión operacional de la ruta.</span></label><p class="it-help">Un pinchazo u otra incidencia se registra cuando ocurre. El margen de contingencia no representa una incidencia real.</p><section id="it-observation"><label>Observación del cambio<textarea name="reason" maxlength="2000" aria-describedby="it-reason-help">${esc(draft.reason)}</textarea></label><p id="it-reason-help" class="it-help"></p></section>`,async()=>{
      if(String(window.currentTripId)!==String(id))throw Error('El viaje abierto cambió. Vuelve a abrir su planificador.');capture();const payload={version:data.version,resource_version:data.resource_version,endpoint_change_ack:draft.endpoint_ack,load_locations_ack:draft.load_ack,load_locations_token:opts.load_locations_token,departure:new Date(draft.departure).toISOString(),contingency_minutes:Number(draft.contingency_minutes),reason:draft.reason,vehicle_review:{acknowledged:true,notes:draft.review},stops:stops.map(s=>({key:s.key,purpose:s.purpose,location_id:Number(s.location_id),service_minutes:Number(s.service_minutes),wait_minutes:Number(s.wait_minutes),rest_minutes:Number(s.rest_minutes)})),loads:draft.loads};
      form.querySelector('[type=submit]').textContent='Calculando ruta y guardando…';await api(id,'','PUT',payload);if(identity()!==token)return;document.getElementById('modal').classList.add('hidden');await window.openTrip(id);
     });
    form.querySelector('[type=submit]').textContent='Calcular ruta y guardar versión';
    const review=document.createElement('section');review.id='it-coherence';review.innerHTML=coherence();
-   form.querySelector('[type=submit]').parentElement?.before?.(review);
+   form.querySelector('#it-observation').before?.(review);
    const map=document.createElement('div');map.id='it-map-preview';map.className='it-map';review.before?.(map);refreshPreview();
-   form.onchange=e=>{if(e.target.name==='endpoint_change_ack'||e.target.name==='load_locations_ack')return;if(/^(s\d+_location_id|l\d+_(pickup|delivery))$/.test(e.target.name||'')){capture();draft.review='';form.querySelector('[name=review]').value='';review.innerHTML=coherence();refreshPreview();}};
+   updateObservation();
+   form.oninput=()=>{if(!form.querySelector('#it-observation'))return;capture();updateObservation();};
+   form.onchange=e=>{if(!form.querySelector('#it-observation')||e.target.name==='endpoint_change_ack'||e.target.name==='load_locations_ack')return;capture();updateObservation();if(/^(s\d+_location_id|l\d+_(pickup|delivery))$/.test(e.target.name||'')){draft.review='';review.innerHTML=coherence();refreshPreview();}};
    form.onclick=async e=>{const b=e.target.closest?.('button');if(!b||b.disabled)return;
     if(b.id==='it-saved-browse'||b.id==='it-saved-save'||b.dataset.itUse!=null||b.dataset.itSavedPage!=null){
      b.disabled=true;try{

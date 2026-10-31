@@ -68,6 +68,21 @@ test('PL16–PL24 PostgreSQL aislado: itinerarios, capacidad, tiempos y excepcio
   const save=async(f,extra={})=>run(f,'put',IT,{...f.body,load_locations_token:require('../itinerary-coherence').token((await query('select * from trip_loads where trip_id=$1 order by id',[f.trip.id])).rows),...extra},{id:f.trip.id});
   const event=(f,kind,stop='s0',extra={})=>run(f,'post',IT+'/events',{version:1,event_key:'event-'+ ++serial,kind,stop_key:stop,...extra},{id:f.trip.id});
 
+  await t.test('observación única: inicial y confirmación sin cambios libres; cambio sin motivo se rechaza sin escrituras',async()=>{
+   const f=await scenario();let r=await save(f,{reason:'',vehicle_review:{acknowledged:true}});
+   assert.equal(r.statusCode,200,JSON.stringify(r.payload));assert.equal(r.payload.reason,'Planificación inicial');assert.equal(r.payload.plan.vehicle_review.notes,'');
+   r=await save(f,{version:1,reason:'',vehicle_review:{acknowledged:true}});assert.equal(r.statusCode,200,JSON.stringify(r.payload));assert.equal(r.payload.reason,'Confirmación del itinerario sin cambios');
+   r=await save(f,{version:2,reason:'',contingency_minutes:20});assert.equal(r.statusCode,400);assert.equal(r.payload.code,'ITINERARY_REASON_REQUIRED');
+   assert.equal((await one('select itinerary_version from trips where id=$1',[f.trip.id])).itinerary_version,2);
+   r=await save(f,{version:2,reason:'Descanso adicional solicitado',contingency_minutes:20,vehicle_review:{acknowledged:true}});assert.equal(r.statusCode,200,JSON.stringify(r.payload));
+   assert.equal(r.payload.reason,'Descanso adicional solicitado');
+   const other=await scenario();await query('update trips set origin_location_id=$1 where id=$2',[other.locations[1].id,other.trip.id]);
+   r=await save(other,{reason:''});assert.equal(r.statusCode,400);assert.equal(r.payload.code,'ITINERARY_REASON_REQUIRED');
+   const loadChange=await scenario();await query('update trip_loads set destination_location_id=$1 where id=$2',[loadChange.locations[3].id,loadChange.loads[0].id]);
+   r=await save(loadChange,{reason:''});assert.equal(r.statusCode,400);assert.equal(r.payload.code,'ITINERARY_REASON_REQUIRED');
+   assert.equal((await one('select itinerary_version from trips where id=$1',[loadChange.trip.id])).itinerary_version,0);
+  });
+
   await t.test('coherencia: confirmar puntos de cargas es explícito, transaccional y genera snapshot vial vigente',async()=>{
    const f=await scenario();let r=await save(f,{load_locations_ack:false});
    assert.equal(r.statusCode,409);assert.equal(r.payload.code,'ITINERARY_LOCATION_CONFLICT');
